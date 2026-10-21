@@ -42,6 +42,9 @@ struct RenderModel {
     FieldState startField;
     FieldState endField;
     FieldState salaryField;
+    FieldState lunchStartField;
+    FieldState lunchEndField;
+    bool editDeductLunch = false;
     int focusedField = -1;  // 0 start, 1 end, 2 salary, -1 none
     bool caretVisible = false;
 

@@ -68,37 +68,38 @@ inline constexpr LogicalRect kProgressText{180, 152, 340, 174};
 inline constexpr LogicalRect kEarnedLabel{20, 184, 200, 204};
 inline constexpr LogicalRect kEarnedAmount{20, 204, 250, 244};
 inline constexpr LogicalRect kSalaryText{220, 217, 340, 241};
-inline constexpr LogicalRect kSettingsButton{20, 258, 340, 304};
-inline constexpr LogicalRect kSettingsLabel{36, 258, 130, 304};
+inline constexpr LogicalRect kSettingsButton{20, 266, 340, 304};
+inline constexpr LogicalRect kSettingsLabel{36, 266, 130, 304};
 inline constexpr int kChevronCenterX = 318;
-inline constexpr int kChevronCenterY = 281;
+inline constexpr int kChevronCenterY = 285;
 
 // -- settings panel ---------------------------------------------------------
-//
-// The 开机自启 row was added without growing the window: at 150% scale a taller
-// expanded window would no longer fit a 1080p work area.
-
-inline constexpr LogicalRect kPanel{20, 306, 340, 642};
-
-inline constexpr LogicalRect kStartLabel{37, 313, 220, 334};
-inline constexpr LogicalRect kStartBox{37, 338, 323, 372};
-inline constexpr LogicalRect kEndModeLabel{37, 376, 112, 397};
-inline constexpr LogicalRect kEndTimeModeButton{112, 374, 212, 399};
-inline constexpr LogicalRect kDurationModeButton{216, 374, 323, 399};
-inline constexpr LogicalRect kEndBox{37, 401, 323, 435};
-inline constexpr LogicalRect kSalaryLabel{37, 439, 220, 460};
-inline constexpr LogicalRect kSalaryBox{37, 464, 323, 498};
-
-inline constexpr LogicalRect kOpacityLabel{37, 502, 323, 521};
-inline constexpr LogicalRect kOpacityTrack{50, 528, 310, 534};
-inline constexpr LogicalRect kOpacityHit{37, 518, 323, 546};
-
-inline constexpr LogicalRect kAutostartLabel{37, 552, 240, 574};
-inline constexpr LogicalRect kAutostartToggle{279, 552, 323, 574};
-inline constexpr LogicalRect kAutostartHit{37, 548, 323, 578};
-
-inline constexpr LogicalRect kSaveButton{37, 582, 323, 616};
-inline constexpr LogicalRect kFooterText{37, 620, 323, 638};
+// Two-column fields keep the expanded panel within the existing height.
+inline constexpr LogicalRect kOcrDropZone{20, 243, 340, 261};
+inline constexpr LogicalRect kPanel{20, 306, 340, 646};
+inline constexpr LogicalRect kStartLabel{37, 313, 175, 333};
+inline constexpr LogicalRect kStartBox{37, 334, 175, 366};
+inline constexpr LogicalRect kSalaryLabel{191, 313, 323, 333};
+inline constexpr LogicalRect kSalaryBox{191, 334, 323, 366};
+inline constexpr LogicalRect kEndModeLabel{37, 372, 112, 393};
+inline constexpr LogicalRect kEndTimeModeButton{112, 370, 212, 395};
+inline constexpr LogicalRect kDurationModeButton{216, 370, 323, 395};
+inline constexpr LogicalRect kEndBox{37, 397, 323, 429};
+inline constexpr LogicalRect kLunchStartLabel{37, 433, 175, 453};
+inline constexpr LogicalRect kLunchEndLabel{191, 433, 323, 453};
+inline constexpr LogicalRect kLunchStartBox{37, 454, 175, 486};
+inline constexpr LogicalRect kLunchEndBox{191, 454, 323, 486};
+inline constexpr LogicalRect kDeductLunchLabel{37, 492, 275, 514};
+inline constexpr LogicalRect kDeductLunchToggle{279, 492, 323, 514};
+inline constexpr LogicalRect kDeductLunchHit{37, 488, 323, 518};
+inline constexpr LogicalRect kOpacityLabel{37, 520, 323, 539};
+inline constexpr LogicalRect kOpacityTrack{50, 546, 310, 552};
+inline constexpr LogicalRect kOpacityHit{37, 536, 323, 564};
+inline constexpr LogicalRect kAutostartLabel{37, 568, 240, 590};
+inline constexpr LogicalRect kAutostartToggle{279, 568, 323, 590};
+inline constexpr LogicalRect kAutostartHit{37, 564, 323, 594};
+inline constexpr LogicalRect kSaveButton{37, 598, 323, 628};
+inline constexpr LogicalRect kFooterText{37, 630, 323, 644};
 
 // Horizontal padding between an input box edge and its text.
 inline constexpr int kInputPadding = 10;
@@ -111,6 +112,9 @@ enum class HotElement {
     StartField,
     EndField,
     SalaryField,
+    LunchStartField,
+    LunchEndField,
+    DeductLunch,
     EndTimeMode,
     DurationMode,
     Opacity,

@@ -99,6 +99,7 @@ namespace {
 struct PhaseNow {
     WorkdayPhase phase = WorkdayPhase::AfterWork;
     int secondsSinceEnd = 0;
+    int remainingSeconds = -1;
 };
 
 PhaseNow CurrentPhase() {
@@ -107,9 +108,12 @@ PhaseNow CurrentPhase() {
     const int nowSeconds = now.wHour * 3600 + now.wMinute * 60 + now.wSecond;
     PhaseNow result;
     try {
-        result.phase = CalculateWorkday(
+        const auto snapshot = CalculateWorkday(
             nowSeconds, g.settings.startMinutes, g.settings.endMinutes,
-            g.settings.dailySalary).phase;
+            g.settings.dailySalary, g.settings.lunchStartMinutes,
+            g.settings.lunchEndMinutes, g.settings.deductLunch);
+        result.phase = snapshot.phase;
+        result.remainingSeconds = snapshot.remainingSeconds;
     } catch (...) {
         // NormalizeSettings makes this unreachable; never let a clock tick
         // take the process down.
@@ -122,14 +126,19 @@ PhaseNow CurrentPhase() {
 }  // namespace
 
 void ResetShiftReminder() {
-    g.reminder = ResetReminder(CurrentPhase().phase);
+    const auto now = CurrentPhase();
+    g.reminder = ResetReminder(now.phase, now.remainingSeconds);
+    g.reminder.lastSecondsSinceEnd = now.secondsSinceEnd;
 }
 
 void TickShiftReminder() {
     const PhaseNow now = CurrentPhase();
     const ReminderDecision decision =
-        TickReminder(g.reminder, now.phase, now.secondsSinceEnd);
+        TickReminder(g.reminder, now.phase, now.secondsSinceEnd, now.remainingSeconds);
     g.reminder = decision.next;
+    if (decision.notifyFiveMinutes) {
+        g.trayIcon.ShowBalloon(L"距离下班还有五分钟", L"今天辛苦了，准备收尾吧。");
+    }
     if (decision.notify) {
         const bool accepted =
             g.trayIcon.ShowBalloon(L"可以下班啦", L"今天辛苦了，记得打卡下班。");

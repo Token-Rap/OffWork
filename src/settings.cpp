@@ -1,6 +1,7 @@
 #include "settings.h"
 
 #include "theme.h"
+#include "calculator.h"
 
 #include <windows.h>
 #include <shlobj.h>
@@ -48,6 +49,18 @@ Settings NormalizeSettings(const Settings& settings) {
         normalized.endMinutes = 18 * 60;
     }
 
+    if (!HasLunch(settings.lunchStartMinutes, settings.lunchEndMinutes)) {
+        normalized.lunchStartMinutes = -1;
+        normalized.lunchEndMinutes = -1;
+        normalized.deductLunch = false;
+    }
+    if (normalized.deductLunch &&
+        LunchOverlapSeconds(normalized.startMinutes * 60,
+            WorkDurationMinutes(normalized.startMinutes, normalized.endMinutes) * 60,
+            normalized.lunchStartMinutes, normalized.lunchEndMinutes) >=
+            WorkDurationMinutes(normalized.startMinutes, normalized.endMinutes) * 60) {
+        normalized.deductLunch = false;
+    }
     return normalized;
 }
 
@@ -76,6 +89,12 @@ Settings LoadSettings(const std::wstring& path) {
         L"window", L"scalePercent", settings.uiScalePercent, path.c_str()));
     settings.opacityPercent = static_cast<int>(GetPrivateProfileIntW(
         L"window", L"opacityPercent", settings.opacityPercent, path.c_str()));
+
+    settings.lunchStartMinutes = static_cast<int>(GetPrivateProfileIntW(
+        L"work", L"lunchStartMinutes", -1, path.c_str()));
+    settings.lunchEndMinutes = static_cast<int>(GetPrivateProfileIntW(
+        L"work", L"lunchEndMinutes", -1, path.c_str()));
+    settings.deductLunch = GetPrivateProfileIntW(L"work", L"deductLunch", 0, path.c_str()) == 1;
 
     wchar_t inputMode[32] = {};
     GetPrivateProfileStringW(
@@ -112,6 +131,11 @@ void SaveSettings(const std::wstring& path, const Settings& settings) {
             ? L"duration"
             : L"endTime",
         path.c_str());
+    swprintf_s(value, L"%d", normalized.lunchStartMinutes);
+    WritePrivateProfileStringW(L"work", L"lunchStartMinutes", value, path.c_str());
+    swprintf_s(value, L"%d", normalized.lunchEndMinutes);
+    WritePrivateProfileStringW(L"work", L"lunchEndMinutes", value, path.c_str());
+    WritePrivateProfileStringW(L"work", L"deductLunch", normalized.deductLunch ? L"1" : L"0", path.c_str());
     swprintf_s(value, L"%.2f", normalized.dailySalary);
     WritePrivateProfileStringW(L"work", L"dailySalary", value, path.c_str());
     swprintf_s(value, L"%d", normalized.uiScalePercent);

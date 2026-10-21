@@ -133,6 +133,32 @@ int main() {
     InvalidEndInputModeFallsBackWithoutChangingValidModes();
     EndInputModeRoundTripsThroughTheIniFile();
 
+    Settings lunch;
+    lunch.lunchStartMinutes = 720;
+    lunch.lunchEndMinutes = 810;
+    lunch.deductLunch = true;
+    auto path = std::filesystem::temp_directory_path() / L"offwork-lunch-test.ini";
+    offwork::SaveSettings(path.wstring(), lunch);
+    auto loaded = offwork::LoadSettings(path.wstring());
+    CHECK(loaded.lunchStartMinutes == 720 && loaded.lunchEndMinutes == 810);
+    CHECK(loaded.deductLunch);
+    // Remove the new keys to reproduce an actual legacy configuration.
+    WritePrivateProfileStringW(L"work", L"lunchStartMinutes", nullptr, path.c_str());
+    WritePrivateProfileStringW(L"work", L"lunchEndMinutes", nullptr, path.c_str());
+    WritePrivateProfileStringW(L"work", L"deductLunch", nullptr, path.c_str());
+    loaded = offwork::LoadSettings(path.wstring());
+    CHECK(loaded.lunchStartMinutes == -1 && loaded.lunchEndMinutes == -1);
+    CHECK(!loaded.deductLunch);
+    lunch.lunchEndMinutes = -1;
+    CHECK(!NormalizeSettings(lunch).deductLunch);
+    lunch.lunchEndMinutes = 720;
+    CHECK(NormalizeSettings(lunch).lunchStartMinutes == -1);
+    lunch.lunchStartMinutes = 1410;
+    lunch.lunchEndMinutes = 30;
+    offwork::SaveSettings(path.wstring(), lunch);
+    loaded = offwork::LoadSettings(path.wstring());
+    CHECK(loaded.lunchStartMinutes == 1410 && loaded.lunchEndMinutes == 30);
+    std::filesystem::remove(path);
     std::cout << "All OffWork settings tests passed.\n";
     return 0;
 }

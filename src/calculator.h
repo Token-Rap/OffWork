@@ -53,11 +53,51 @@ inline int DurationMinutesFromHours(double hours) {
     return minutes;
 }
 
+inline bool HasLunch(int start, int end) {
+    return start >= 0 && start < 1440 && end >= 0 && end < 1440 && start != end;
+}
+
+// Seconds of a daily repeating break intersecting [start, start + elapsed).
+// Include the previous day's break for a shift beginning inside an overnight break.
+inline int LunchOverlapSeconds(int start, int elapsed, int lunchStart, int lunchEnd) {
+    if (!HasLunch(lunchStart, lunchEnd)) return 0;
+    const int length = WorkDurationMinutes(lunchStart, lunchEnd) * 60;
+    int overlap = 0;
+    for (int day = -1; day <= 2; ++day) {
+        const int begin = lunchStart * 60 + day * 86400;
+        overlap += std::max(0, std::min(start + elapsed, begin + length) - std::max(start, begin));
+    }
+    return overlap;
+}
+
+inline int EffectiveWorkMinutes(int start, int end, int lunchStart, int lunchEnd, bool deduct) {
+    const int duration = WorkDurationMinutes(start, end);
+    const int effective = duration - (deduct
+        ? LunchOverlapSeconds(start * 60, duration * 60, lunchStart, lunchEnd) / 60 : 0);
+    if (effective <= 0) throw std::invalid_argument("no working time");
+    return effective;
+}
+
+inline int EndMinutesWithLunch(int start, int duration, int lunchStart, int lunchEnd, bool deduct) {
+    (void)EndMinutesFromDuration(start, duration); // validate inputs
+    if (!deduct || !HasLunch(lunchStart, lunchEnd)) return EndMinutesFromDuration(start, duration);
+    // Walk at minute precision, matching the persisted schedule. Reject days >= 24h
+    // because a clock-only schedule cannot represent them unambiguously.
+    int worked = 0;
+    for (int elapsed = 1; elapsed < 1440; ++elapsed) {
+        if (LunchOverlapSeconds(start * 60, elapsed * 60, lunchStart, lunchEnd) ==
+            LunchOverlapSeconds(start * 60, (elapsed - 1) * 60, lunchStart, lunchEnd)) ++worked;
+        if (worked == duration) return (start + elapsed) % 1440;
+    }
+    throw std::invalid_argument("shift must be shorter than 24h");
+}
+
 inline WorkdaySnapshot CalculateWorkday(
     int nowSeconds,
     int startMinutes,
     int endMinutes,
-    double dailySalary) {
+    double dailySalary,
+    int lunchStart = -1, int lunchEnd = -1, bool deductLunch = false) {
     constexpr int secondsPerDay = 24 * 60 * 60;
 
     if (nowSeconds < 0 || nowSeconds >= secondsPerDay) {
@@ -101,8 +141,15 @@ inline WorkdaySnapshot CalculateWorkday(
         remaining = duration - elapsed;
     }
 
+    const int effectiveDuration = duration - (deductLunch
+        ? LunchOverlapSeconds(startSeconds, duration, lunchStart, lunchEnd) : 0);
+    if (effectiveDuration <= 0) throw std::invalid_argument("no working time");
+    if (deductLunch) {
+        elapsed -= LunchOverlapSeconds(startSeconds, elapsed, lunchStart, lunchEnd);
+        if (phase == WorkdayPhase::Working) remaining = effectiveDuration - elapsed;
+    }
     const double progress = std::clamp(
-        static_cast<double>(elapsed) / static_cast<double>(duration), 0.0, 1.0);
+        static_cast<double>(elapsed) / static_cast<double>(effectiveDuration), 0.0, 1.0);
     const double earned = dailySalary * progress;
     return {phase, remaining, earned, progress};
 }

@@ -32,6 +32,9 @@ RenderModel BuildModel() {
     model.startField = g.fields[0];
     model.endField = g.fields[1];
     model.salaryField = g.fields[2];
+    model.lunchStartField = g.fields[3];
+    model.lunchEndField = g.fields[4];
+    model.editDeductLunch = g.editDeductLunch;
     model.focusedField = g.expanded ? g.focusedField : -1;
     model.caretVisible = g.caretVisible;
     model.footerText = g.footerText;

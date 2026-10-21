@@ -69,7 +69,22 @@ HKCU\Software\Microsoft\Windows\CurrentVersion\Run  ->  值名 OffWork
 4. 点标题栏图钉，可以开启或取消窗口置顶。
 5. 拖动窗口边缘或四角可以等比例调整大小；设置里可以调不透明度和开机自启。
 6. 点关闭按钮会把窗口隐藏到系统托盘。双击托盘小猫恢复窗口；右键菜单可以显示/隐藏窗口、切换开机自启或彻底退出。
-7. 到达下班时间时，Windows 会弹出「可以下班啦」提醒；点击通知可以恢复窗口。每个班次只提醒一次。
+7. 剩余有效工作时间首次降至五分钟时，会收到「距离下班还有五分钟」提醒；到达下班时间时，会收到「可以下班啦」提醒。点击通知可以恢复窗口，每种提醒每班次各一次。
+8. 把 PNG、JPG/JPEG 或 BMP 打卡截图拖到主窗口的「拖入打卡截图」区域（窗口其他位置也可接收），识别成功后自动填写上班时间并保存；时长模式会保留有效工作时长并重算下班时间。识别失败会显示中文提示。
+
+### 午休与倒计时
+
+展开设置，填写「午休开始」「午休结束」，例如 `12:00`–`13:30`；两项同时留空表示不设午休。跨午夜午休也支持。只有填好有效午休后，「距离下班时间扣除午休」开关才有意义。
+
+开启后，倒计时、工作进度、已赚金额和五分钟提醒均按有效工作时间计算，午休期间暂停变化。直接填写下班时间时，下班时刻不变；时长模式中的小时数表示净工作时长，例如 09:00 上班、工作 8 小时、午休 12:00–13:30，下班时间为 18:30。关闭开关则按连续时长计算。清空两项午休时间并保存可移除午休。
+
+设置保存在 `%LOCALAPPDATA%\OffWork\settings.ini` 的 `[work]` 中：`lunchStartMinutes`、`lunchEndMinutes` 为自午夜起的分钟数，`-1` 表示未设置；`deductLunch=1` 表示扣除。旧配置缺少这些字段时自动按未设置、不开启扣除处理。
+
+### 截图识别与提醒
+
+截图识别使用本机 Windows.Media.Ocr，优先简体中文，不上传图片、不依赖第三方 OCR。请在 Windows 语言设置中安装简体中文的文字识别（OCR）组件。识别优先选取「上班打卡」「打卡成功」附近的时间，忽略「班次时间」「班次」「应上班」对应的排班时间；没有关键词匹配时才从其他有效时间中取最早值。支持 `08:55`、`08：55`、`08 : 55` 等形式。成功导入会替换当前上班时间和设置面板内容。
+
+两种提醒在窗口隐藏到托盘时仍有效。启动时已经处于五分钟窗口内或已下班，不补发提醒；修改排班或通过 OCR 导入时间会重置提醒基线。长时间休眠后观察到的过期变化会静默处理，避免补发旧提醒。
 
 输入框支持光标移动、选中（拖选或双击全选）、`Tab` 切换、以及 `Ctrl+A/C/X/V`。时间框只接受数字和冒号，日薪框只接受数字和小数点。
 
@@ -86,7 +101,9 @@ HKCU\Software\Microsoft\Windows\CurrentVersion\Run  ->  值名 OffWork
 - 25%–100% 不透明度滑动调节，默认完全不透明
 - 应用内「开机自启」开关，以注册表为准
 - 常驻系统托盘，关闭窗口不丢失倒计时；托盘菜单可控制窗口、自启和退出
-- 到达下班时间时发送一次 Windows 系统通知，窗口隐藏到托盘时同样有效
+- 五分钟前和到达下班时间时分别发送一次 Windows 系统通知，隐藏到托盘时同样有效
+- 午休设置与可选有效工时扣除，兼容旧配置
+- 本机识别打卡截图，自动填入上班时间并保存
 - 自动记住上下班时间和日薪
 - 内嵌多尺寸小猫程序图标，Explorer 属性里有完整版本信息
 - 单个原生 Win32 exe，无 .NET/WinUI/Electron 运行时
@@ -105,7 +122,7 @@ HKCU\Software\Microsoft\Windows\CurrentVersion\Run  ->  值名 OffWork
 已赚金额 = 日薪 × 已工作时长 ÷ 当日总工作时长
 ```
 
-上班前显示 ¥0.00；下班后封顶为完整日薪。当前版本不单独扣除午休时间。
+上班前显示 ¥0.00；下班后封顶为完整日薪。开启午休扣除后，分子和分母都排除与班次重叠的午休时长。
 
 ## 开发与构建
 
@@ -119,7 +136,18 @@ cmake --build build --config Release --parallel
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-构建结果位于 `build\Release\OffWork.exe`。
+构建结果位于 `build\Release\OffWork.exe`。C++/WinRT 头文件及 `windowsapp.lib` 来自 Windows SDK，无需安装 OCR 包。
+
+已有 Ninja Release 目录时，也可以在 Developer PowerShell 中执行：
+
+```powershell
+cmake -S . -B build/release-ninja -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build/release-ninja --parallel
+ctest --test-dir build/release-ninja -C Release --output-on-failure
+.\build\release-ninja\OffWorkOcrImageTests.exe tests\data\dingtalk_clockin.png
+```
+
+CTest 包含计算器、文本编辑、配置兼容、开机自启、两种提醒、OCR 纯文本解析、真实图片 OCR 和午休编辑/时长转换测试。真实图片测试会打印原始 OCR 分行文本与解析结果，并断言为 `08:55`（535 分钟）；需要本机具备中文 OCR 组件，缺失时测试失败并给出提示。
 
 构建安装包需要 [Inno Setup 6](https://jrsoftware.org/isdl.php)（`winget install JRSoftware.InnoSetup`）：
 

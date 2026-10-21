@@ -6,6 +6,8 @@
 #include "calculator.h"
 
 #include <cmath>
+#include <chrono>
+#include <future>
 #include <cstdio>
 #include <cstring>
 #include <cwchar>
@@ -77,14 +79,18 @@ bool ParseDurationText(const std::wstring& text, int& durationMinutes) {
 
 void PopulateFields() {
     g.editEndInputMode = g.settings.endInputMode;
+    g.editDeductLunch = g.settings.deductLunch;
     g.fields[0] = MakeField(FormatTimeValue(g.settings.startMinutes));
     g.fields[1] = MakeField(
         g.editEndInputMode == EndInputMode::WorkDuration
             ? FormatDurationHours(
-                  WorkDurationMinutes(
-                      g.settings.startMinutes, g.settings.endMinutes))
+                  EffectiveWorkMinutes(
+                      g.settings.startMinutes, g.settings.endMinutes,
+                      g.settings.lunchStartMinutes, g.settings.lunchEndMinutes, g.settings.deductLunch))
             : FormatTimeValue(g.settings.endMinutes));
     g.fields[2] = MakeField(FormatSalaryValue(g.settings.dailySalary));
+    g.fields[3] = MakeField(g.settings.lunchStartMinutes < 0 ? L"" : FormatTimeValue(g.settings.lunchStartMinutes));
+    g.fields[4] = MakeField(g.settings.lunchEndMinutes < 0 ? L"" : FormatTimeValue(g.settings.lunchEndMinutes));
 }
 
 bool ParseTimeText(const std::wstring& text, int& minutes) {
@@ -99,24 +105,43 @@ bool ParseTimeText(const std::wstring& text, int& minutes) {
     return true;
 }
 
+bool ReadLunchFields(Settings& settings) {
+    settings.lunchStartMinutes = settings.lunchEndMinutes = -1;
+    settings.deductLunch = false;
+    if (g.fields[3].text.empty() && g.fields[4].text.empty()) return true;
+    if (!ParseTimeText(g.fields[3].text, settings.lunchStartMinutes) ||
+        !ParseTimeText(g.fields[4].text, settings.lunchEndMinutes) ||
+        !HasLunch(settings.lunchStartMinutes, settings.lunchEndMinutes)) return false;
+    settings.deductLunch = g.editDeductLunch;
+    return true;
+}
+
 bool ReadFieldSettings(Settings& settings) {
     settings = g.settings;
     if (!ParseTimeText(g.fields[0].text, settings.startMinutes)) {
         return false;
     }
 
+    if (!ReadLunchFields(settings)) return false;
     settings.endInputMode = g.editEndInputMode;
     if (g.editEndInputMode == EndInputMode::WorkDuration) {
         int durationMinutes = 0;
         if (!ParseDurationText(g.fields[1].text, durationMinutes)) {
             return false;
         }
-        settings.endMinutes =
-            EndMinutesFromDuration(settings.startMinutes, durationMinutes);
+        try {
+            settings.endMinutes = EndMinutesWithLunch(settings.startMinutes, durationMinutes,
+                settings.lunchStartMinutes, settings.lunchEndMinutes, settings.deductLunch);
+        } catch (const std::invalid_argument&) { return false; }
     } else if (!ParseTimeText(g.fields[1].text, settings.endMinutes) ||
                settings.startMinutes == settings.endMinutes) {
         return false;
     }
+
+    try {
+        (void)EffectiveWorkMinutes(settings.startMinutes, settings.endMinutes,
+            settings.lunchStartMinutes, settings.lunchEndMinutes, settings.deductLunch);
+    } catch (const std::invalid_argument&) { return false; }
 
     const std::wstring& salaryText = g.fields[2].text;
     if (salaryText.empty()) {
@@ -212,34 +237,84 @@ void TogglePinned() {
     Present();
 }
 
+void ToggleDeductLunch() {
+    Settings draft = g.settings;
+    if (!ReadLunchFields(draft) || !HasLunch(draft.lunchStartMinutes, draft.lunchEndMinutes)) {
+        SetFooter(L"请先填写有效的午休开始和结束时间", true);
+    } else {
+        g.editDeductLunch = !g.editDeductLunch;
+        ResetFooter();
+    }
+    Present();
+}
+
 void SetEndInputMode(EndInputMode mode) {
-    if (g.editEndInputMode == mode) {
+    if (g.editEndInputMode == mode) return;
+    Settings draft;
+    if (!ReadFieldSettings(draft)) {
+        SetFooter(kValidationFooter, true);
+        Present();
         return;
     }
-
-    int startMinutes = g.settings.startMinutes;
-    ParseTimeText(g.fields[0].text, startMinutes);
-    int durationMinutes = WorkDurationMinutes(
-        g.settings.startMinutes, g.settings.endMinutes);
-
-    if (mode == EndInputMode::WorkDuration) {
-        int endMinutes = g.settings.endMinutes;
-        if (ParseTimeText(g.fields[1].text, endMinutes) &&
-            endMinutes != startMinutes) {
-            durationMinutes = WorkDurationMinutes(startMinutes, endMinutes);
-        }
-        g.fields[1] = MakeField(FormatDurationHours(durationMinutes));
-    } else {
-        ParseDurationText(g.fields[1].text, durationMinutes);
-        g.fields[1] = MakeField(FormatTimeValue(
-            EndMinutesFromDuration(startMinutes, durationMinutes)));
-    }
-
+    g.fields[1] = MakeField(mode == EndInputMode::WorkDuration
+        ? FormatDurationHours(EffectiveWorkMinutes(draft.startMinutes, draft.endMinutes,
+            draft.lunchStartMinutes, draft.lunchEndMinutes, draft.deductLunch))
+        : FormatTimeValue(draft.endMinutes));
     g.editEndInputMode = mode;
-    if (g.focusedField == 1) {
-        g.fields[1] = SelectAll(g.fields[1]);
-    }
+    if (g.focusedField == 1) g.fields[1] = SelectAll(g.fields[1]);
     ResetFooter();
+    Present();
+}
+
+void BeginScreenshotOcr(const std::wstring& path) {
+    if (g.ocrTask.valid()) {
+        MessageBoxW(g.window, L"正在识别上一张截图，请稍候。", L"截图识别", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    try {
+        g.ocrTask = std::async(std::launch::async, [path] { return RecognizeScreenshot(path); });
+        SetFooter(L"正在识别打卡截图…", false);
+        Present();
+    } catch (...) {
+        MessageBoxW(g.window, L"无法启动截图识别，请稍后重试。", L"截图识别", MB_OK | MB_ICONWARNING);
+    }
+}
+
+void PollScreenshotOcr() {
+    if (!g.ocrTask.valid() || g.ocrTask.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
+    OcrResult result;
+    try { result = g.ocrTask.get(); }
+    catch (...) { result.error = L"识别失败，请重新拖入清晰的打卡截图。"; }
+    if (result.minutes) {
+        Settings updated = g.settings;
+        try {
+            if (updated.endInputMode == EndInputMode::WorkDuration) {
+                const int duration = EffectiveWorkMinutes(updated.startMinutes, updated.endMinutes,
+                    updated.lunchStartMinutes, updated.lunchEndMinutes, updated.deductLunch);
+                updated.endMinutes = EndMinutesWithLunch(*result.minutes, duration,
+                    updated.lunchStartMinutes, updated.lunchEndMinutes, updated.deductLunch);
+            }
+            updated.startMinutes = *result.minutes;
+            if (NormalizeSettings(updated).startMinutes != updated.startMinutes ||
+                updated.startMinutes == updated.endMinutes) throw std::invalid_argument("schedule");
+            (void)EffectiveWorkMinutes(updated.startMinutes, updated.endMinutes,
+                updated.lunchStartMinutes, updated.lunchEndMinutes, updated.deductLunch);
+            g.settings = updated;
+            SaveSettings(g.settingsPath, g.settings);
+            PopulateFields();
+            SetFocusedField(-1);
+            ResetShiftReminder();
+            const auto message = L"已识别上班时间 " + FormatTimeValue(*result.minutes) + L"，并保存设置。";
+            SetFooter(message, false);
+            MessageBoxW(g.window, message.c_str(), L"截图识别成功", MB_OK | MB_ICONINFORMATION);
+        } catch (const std::invalid_argument&) {
+            result.error = L"识别时间与当前排班冲突，请先调整下班时间或工作时长。";
+        }
+    }
+    if (!result.error.empty()) {
+        SetFooter(L"截图识别失败，请重试", true);
+        MessageBoxW(g.window, result.error.c_str(), L"截图识别", MB_OK | MB_ICONWARNING);
+    }
     Present();
 }
 

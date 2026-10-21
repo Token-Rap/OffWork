@@ -24,6 +24,9 @@ std::wstring ReadClipboardText(HWND owner);
 void WriteClipboardText(HWND owner, const std::wstring& text);
 
 void ApplySave();
+void ToggleDeductLunch();
+void BeginScreenshotOcr(const std::wstring& path);
+void PollScreenshotOcr();
 void ToggleAutostart();
 void TogglePinned();
 void SetEndInputMode(EndInputMode mode);

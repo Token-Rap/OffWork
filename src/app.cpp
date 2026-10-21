@@ -13,6 +13,8 @@
 #include <commctrl.h>
 #include <dwmapi.h>
 #include <windowsx.h>
+#include <shellapi.h>
+#include <vector>
 
 #include <algorithm>
 #include <cmath>
@@ -141,6 +143,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
     switch (message) {
         case WM_CREATE: {
             g.window = window;
+            DragAcceptFiles(window, TRUE);
             g.dpi = GetDpiForWindow(window);
             g.icon = static_cast<HICON>(LoadImageW(
                 GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDI_OFFWORK),
@@ -161,6 +164,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 // The reminder is decided on every tick, hidden or not; only
                 // painting depends on visibility.
                 TickShiftReminder();
+                PollScreenshotOcr();
                 if (IsWindowVisible(window)) {
                     Present();
                 }
@@ -169,6 +173,23 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 Present();
             }
             return 0;
+
+        case WM_DROPFILES: {
+            const auto drop = reinterpret_cast<HDROP>(wParam);
+            const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+            std::wstring path;
+            if (count == 1) {
+                const UINT length = DragQueryFileW(drop, 0, nullptr, 0);
+                std::vector<wchar_t> buffer(static_cast<std::size_t>(length) + 1);
+                DragQueryFileW(drop, 0, buffer.data(), length + 1);
+                path = buffer.data();
+            }
+            DragFinish(drop);
+            if (count != 1 || path.empty()) {
+                MessageBoxW(window, L"请每次拖入一张打卡截图。", L"截图识别", MB_OK | MB_ICONINFORMATION);
+            } else BeginScreenshotOcr(path);
+            return 0;
+        }
 
         case WM_PAINT: {
             // Content is published by UpdateLayeredWindow, never by WM_PAINT.
@@ -414,6 +435,9 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                     break;
                 case HotElement::DurationMode:
                     SetEndInputMode(EndInputMode::WorkDuration);
+                    break;
+                case HotElement::DeductLunch:
+                    ToggleDeductLunch();
                     break;
                 case HotElement::Save:
                     ApplySave();

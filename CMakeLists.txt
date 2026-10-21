@@ -61,9 +61,34 @@ add_executable(OffWorkReminderTests
 offwork_target_defaults(OffWorkReminderTests)
 add_test(NAME reminder COMMAND OffWorkReminderTests)
 
+add_executable(OffWorkOcrTimeTests tests/ocr_time_tests.cpp)
+offwork_target_defaults(OffWorkOcrTimeTests)
+add_test(NAME ocr_time COMMAND OffWorkOcrTimeTests)
+
 # -- application -------------------------------------------------------------
 
 if(WIN32)
+  add_library(OffWorkOcr STATIC src/ocr.cpp)
+  offwork_target_defaults(OffWorkOcr)
+  target_link_libraries(OffWorkOcr PUBLIC windowsapp)
+  add_executable(OffWorkOcrImageTests tests/ocr_image_tests.cpp)
+  offwork_target_defaults(OffWorkOcrImageTests)
+  target_link_libraries(OffWorkOcrImageTests PRIVATE OffWorkOcr)
+  add_test(NAME ocr_image COMMAND OffWorkOcrImageTests
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/dingtalk_clockin.png")
+  set_tests_properties(ocr_image PROPERTIES TIMEOUT 60)
+
+  add_executable(OffWorkAppEditTests
+    tests/app_edit_tests.cpp
+    src/app_edit.cpp src/app_view.cpp src/app_tray.cpp src/render.cpp
+    src/settings.cpp src/autostart.cpp src/reminder.cpp src/tray_icon.cpp
+    src/text_field.cpp src/layered_surface.cpp
+  )
+  offwork_target_defaults(OffWorkAppEditTests)
+  target_link_libraries(OffWorkAppEditTests PRIVATE OffWorkOcr
+    advapi32 gdi32 msimg32 ole32 shell32 user32)
+  add_test(NAME app_edit COMMAND OffWorkAppEditTests)
+
   enable_language(RC)
   # offwork.rc is UTF-8. rc.exe otherwise reads it in the system ANSI codepage,
   # which silently turns the Chinese FileDescription into mojibake in the
@@ -86,6 +111,7 @@ if(WIN32)
   )
   offwork_target_defaults(OffWork)
   target_link_libraries(OffWork PRIVATE
+    OffWorkOcr
     advapi32
     comctl32
     dwmapi

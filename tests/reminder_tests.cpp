@@ -161,9 +161,54 @@ void SimulatedOvernightShiftNotifiesAtSixInTheMorning() {
     CHECK(CountNotifications(state, At(21, 0), At(21, 0) + kDay, 22 * 60, 6 * 60) == 1);
 }
 
+void FiveMinuteReminderTransitions() {
+    auto state = ResetReminder(WorkdayPhase::Working, 301);
+    auto d = TickReminder(state, WorkdayPhase::Working, kDay - 300, 300);
+    CHECK(d.notifyFiveMinutes);
+    d = TickReminder(d.next, WorkdayPhase::Working, kDay - 299, 299);
+    CHECK(!d.notifyFiveMinutes);
+    // Clock rollback must not repeat a reminder within the same shift.
+    d = TickReminder(d.next, WorkdayPhase::Working, kDay - 400, 400);
+    d = TickReminder(d.next, WorkdayPhase::Working, kDay - 300, 300);
+    CHECK(!d.notifyFiveMinutes);
+    d = TickReminder(d.next, WorkdayPhase::AfterWork, 0, 0);
+    CHECK(d.notify);
+    CHECK(!d.notifyFiveMinutes);
+    d = TickReminder(d.next, WorkdayPhase::Working, kDay - 301, 301);
+    d = TickReminder(d.next, WorkdayPhase::Working, kDay - 300, 300);
+    CHECK(d.notifyFiveMinutes);
+}
+
+void FiveMinuteStartupResetAndStaleAreSilent() {
+    for (int remaining : {300, 299, 1, 0}) {
+        auto state = ResetReminder(WorkdayPhase::Working, remaining);
+        CHECK(!TickReminder(state, WorkdayPhase::Working, kDay - remaining, remaining).notifyFiveMinutes);
+    }
+    CHECK(!TickReminder({}, WorkdayPhase::Working, kDay - 299, 299).notifyFiveMinutes);
+    auto d = TickReminder(ResetReminder(WorkdayPhase::Working, 1200),
+                          WorkdayPhase::Working, kDay - 1200, 1200);
+    d = TickReminder(d.next, WorkdayPhase::Working, kDay - 60, 60);
+    CHECK(!d.notifyFiveMinutes); // Slept for 19 minutes.
+    d = TickReminder(d.next, WorkdayPhase::Working, kDay - 59, 59);
+    CHECK(!d.notifyFiveMinutes);
+}
+
+void FiveMinuteReminderUsesLunchAdjustedRemaining() {
+    auto snapshot = CalculateWorkday(At(11, 54, 59), 9*60, 13*60, 500, 12*60, 13*60, true);
+    auto state = ResetReminder(snapshot.phase, snapshot.remainingSeconds);
+    snapshot = CalculateWorkday(At(11, 55), 9*60, 13*60, 500, 12*60, 13*60, true);
+    const auto d = TickReminder(state, snapshot.phase, SecondsSinceShiftEnd(At(11,55), 13*60), snapshot.remainingSeconds);
+    CHECK(d.notifyFiveMinutes);
+    CHECK(snapshot.remainingSeconds == 300);
+    CHECK(!TickReminder(d.next, WorkdayPhase::Working, kDay-3600, 0).notifyFiveMinutes);
+}
+
 }  // namespace
 
 int main() {
+    FiveMinuteReminderTransitions();
+    FiveMinuteStartupResetAndStaleAreSilent();
+    FiveMinuteReminderUsesLunchAdjustedRemaining();
     SecondsSinceShiftEndWrapsAroundMidnight();
     TransitionNotifiesExactlyOnce();
     RepeatedAfterWorkTicksNeverRepeat();

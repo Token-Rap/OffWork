@@ -104,6 +104,8 @@ const FieldState& FieldFor(const RenderModel& model, int index) {
     switch (index) {
         case 0: return model.startField;
         case 1: return model.endField;
+        case 3: return model.lunchStartField;
+        case 4: return model.lunchEndField;
         default: return model.salaryField;
     }
 }
@@ -182,21 +184,22 @@ void DrawOpacitySlider(HDC dc, const RenderModel& model) {
         model.hot == HotElement::Opacity ? kAccentHover : kTextPrimary);
 }
 
-void DrawAutostartToggle(HDC dc, const RenderModel& model) {
+void DrawToggle(HDC dc, const RenderModel& model, const LogicalRect& rect,
+                HotElement element, bool enabled) {
     const int scale = model.settings.uiScalePercent;
-    const RECT track = ToRect(kAutostartToggle, scale, model.dpi);
+    const RECT track = ToRect(rect, scale, model.dpi);
     const int height = track.bottom - track.top;
     const int radius = height / 2;
 
-    COLORREF trackColor = model.autostartEnabled ? kAccent : kToggleOff;
-    if (model.hot == HotElement::Autostart) {
-        trackColor = model.autostartEnabled ? kAccentHover : kButtonHover;
+    COLORREF trackColor = enabled ? kAccent : kToggleOff;
+    if (model.hot == element) {
+        trackColor = enabled ? kAccentHover : kButtonHover;
     }
     FillRounded(dc, track, height, trackColor);
 
     const int inset = std::max(2, ScaleValue(2, scale, model.dpi));
     const int knobDiameter = height - inset * 2;
-    const int knobLeft = model.autostartEnabled
+    const int knobLeft = enabled
         ? track.right - inset - knobDiameter
         : track.left + inset;
     const RECT knob = {
@@ -338,6 +341,8 @@ int FieldIndexOf(HotElement element) {
         case HotElement::StartField: return 0;
         case HotElement::EndField: return 1;
         case HotElement::SalaryField: return 2;
+        case HotElement::LunchStartField: return 3;
+        case HotElement::LunchEndField: return 4;
         default: return -1;
     }
 }
@@ -346,6 +351,8 @@ const LogicalRect& FieldBox(int fieldIndex) {
     switch (fieldIndex) {
         case 0: return kStartBox;
         case 1: return kEndBox;
+        case 3: return kLunchStartBox;
+        case 4: return kLunchEndBox;
         default: return kSalaryBox;
     }
 }
@@ -398,6 +405,9 @@ HotElement HitTest(POINT point, const RenderModel& model) {
     if (Contains(ToRect(kSalaryBox, scale, dpi), point)) {
         return HotElement::SalaryField;
     }
+    if (Contains(ToRect(kLunchStartBox, scale, dpi), point)) return HotElement::LunchStartField;
+    if (Contains(ToRect(kLunchEndBox, scale, dpi), point)) return HotElement::LunchEndField;
+    if (Contains(ToRect(kDeductLunchHit, scale, dpi), point)) return HotElement::DeductLunch;
     if (Contains(ToRect(kEndTimeModeButton, scale, dpi), point)) {
         return HotElement::EndTimeMode;
     }
@@ -480,7 +490,8 @@ void RenderFrame(HDC dc, const RenderModel& model) {
         snapshot = offwork::CalculateWorkday(
             std::clamp(nowSeconds, 0, 24 * 60 * 60 - 1),
             model.settings.startMinutes, model.settings.endMinutes,
-            model.settings.dailySalary);
+            model.settings.dailySalary, model.settings.lunchStartMinutes,
+            model.settings.lunchEndMinutes, model.settings.deductLunch);
     } catch (...) {
         // NormalizeSettings makes this unreachable; a painted frame must never
         // be the thing that takes the process down.
@@ -548,6 +559,9 @@ void RenderFrame(HDC dc, const RenderModel& model) {
     DrawTextInRect(dc, L"设置", ToRect(kSettingsLabel, scale, dpi),
                    model.fonts->button, kTextPrimary);
     DrawChevron(dc, model);
+    FillRounded(dc, ToRect(kOcrDropZone, scale, dpi), ScaleValue(3, scale, dpi), kInputBackground);
+    DrawTextInRect(dc, L"拖入打卡截图 · PNG / JPG / BMP", ToRect(kOcrDropZone, scale, dpi),
+        model.fonts->tiny, kTextSecondary, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
     if (!model.expanded) {
         return;
@@ -572,6 +586,16 @@ void RenderFrame(HDC dc, const RenderModel& model) {
     DrawField(dc, model, 0);
     DrawField(dc, model, 1);
     DrawField(dc, model, 2);
+    DrawTextInRect(dc, L"午休开始（可留空）", ToRect(kLunchStartLabel, scale, dpi),
+                   model.fonts->tiny, kTextPrimary);
+    DrawTextInRect(dc, L"午休结束（可留空）", ToRect(kLunchEndLabel, scale, dpi),
+                   model.fonts->tiny, kTextPrimary);
+    DrawField(dc, model, 3);
+    DrawField(dc, model, 4);
+    const bool hasLunch = !model.lunchStartField.text.empty() && !model.lunchEndField.text.empty();
+    DrawTextInRect(dc, L"距离下班时间扣除午休", ToRect(kDeductLunchLabel, scale, dpi),
+                   model.fonts->tiny, hasLunch ? kTextPrimary : kTextMuted);
+    DrawToggle(dc, model, kDeductLunchToggle, HotElement::DeductLunch, hasLunch && model.editDeductLunch);
 
     wchar_t opacityLabel[32] = {};
     swprintf_s(opacityLabel, L"不透明度 %d%%", model.settings.opacityPercent);
@@ -581,7 +605,7 @@ void RenderFrame(HDC dc, const RenderModel& model) {
 
     DrawTextInRect(dc, L"开机自启", ToRect(kAutostartLabel, scale, dpi),
                    model.fonts->label, kTextPrimary);
-    DrawAutostartToggle(dc, model);
+    DrawToggle(dc, model, kAutostartToggle, HotElement::Autostart, model.autostartEnabled);
 
     FillRounded(
         dc, ToRect(kSaveButton, scale, dpi), ScaleValue(6, scale, dpi),
