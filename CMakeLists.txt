@@ -35,6 +35,10 @@ add_executable(OffWorkTests tests/calculator_tests.cpp)
 offwork_target_defaults(OffWorkTests)
 add_test(NAME calculator COMMAND OffWorkTests)
 
+add_executable(OffWorkMoneyDisplayTests tests/money_display_tests.cpp)
+offwork_target_defaults(OffWorkMoneyDisplayTests)
+add_test(NAME money_display COMMAND OffWorkMoneyDisplayTests)
+
 add_executable(OffWorkTextFieldTests
   tests/text_field_tests.cpp
   src/text_field.cpp

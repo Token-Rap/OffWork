@@ -1,6 +1,7 @@
 #include "render.h"
 
 #include "calculator.h"
+#include "money_display.h"
 
 #include <algorithm>
 #include <cmath>
@@ -655,13 +656,15 @@ void RenderFrame(HDC dc, const RenderModel& model) {
                    model.fonts->label, kTextSecondary);
     wchar_t earned[64] = {};
     swprintf_s(earned, L"¥%.2f", snapshot.earned);
+    const auto earnedText = MoneyDisplayText(earned, model.settings.hideEarned);
     DrawEye(dc, model);
-    DrawTextInRect(dc, model.settings.hideEarned ? L"****" : earned, ToRect(kEarnedAmount, scale, dpi),
+    DrawTextInRect(dc, earnedText, ToRect(kEarnedAmount, scale, dpi),
                    model.fonts->amount, kEarned);
     wchar_t salary[64] = {};
-    swprintf_s(salary, L"日薪 ¥%.2f", model.settings.dailySalary);
+    swprintf_s(salary, L"¥%.2f", model.settings.dailySalary);
+    const auto salaryText = L"日薪 " + MoneyDisplayText(salary, model.settings.hideEarned);
     DrawTextInRect(
-        dc, salary, ToRect(kSalaryText, scale, dpi), model.fonts->tiny,
+        dc, salaryText, ToRect(kSalaryText, scale, dpi), model.fonts->tiny,
         kTextSecondary, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
     FillRounded(

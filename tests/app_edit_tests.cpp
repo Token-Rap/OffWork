@@ -9,6 +9,64 @@
 
 namespace {
 
+bool SamePixels(HDC first, HDC second, const RECT& rect) {
+    GdiFlush();
+    DIBSECTION a = {}, b = {};
+    CHECK(GetObjectW(GetCurrentObject(first, OBJ_BITMAP), sizeof(a), &a));
+    CHECK(GetObjectW(GetCurrentObject(second, OBJ_BITMAP), sizeof(b), &b));
+    const auto* left = static_cast<const std::uint32_t*>(a.dsBm.bmBits);
+    const auto* right = static_cast<const std::uint32_t*>(b.dsBm.bmBits);
+    for (int y = rect.top; y < rect.bottom; ++y) {
+        for (int x = rect.left; x < rect.right; ++x) {
+            const auto index = static_cast<std::size_t>(y) * a.dsBm.bmWidth + x;
+            if (((left[index] ^ right[index]) & 0x00ffffff) != 0) return false;
+        }
+    }
+    return true;
+}
+
+void AllMoneyOutsideEditorIsMasked() {
+    using namespace offwork;
+    for (const bool expanded : {false, true}) {
+        for (const int scale : {75, 100, 150}) {
+            for (const UINT dpi : {96u, 144u, 192u}) {
+                RenderModel model;
+                model.expanded = expanded;
+                model.settings.uiScalePercent = scale;
+                model.dpi = dpi;
+                model.now.wHour = 12;
+                model.salaryField = MakeField(L"500.00");
+                auto fonts = CreateFonts(scale, dpi);
+                model.fonts = &fonts;
+                const SIZE size = WindowSizeFor(scale, dpi, expanded);
+                LayeredSurface first, second;
+                CHECK(first.EnsureSize(size.cx, size.cy));
+                CHECK(second.EnsureSize(size.cx, size.cy));
+                const RECT earned = ScaleRect(kEarnedAmount, scale, dpi);
+                const RECT salary = ScaleRect(kSalaryText, scale, dpi);
+                const RECT editor = ScaleRect(kSalaryBox, scale, dpi);
+                for (const bool hide : {true, false}) {
+                    model.settings.hideEarned = hide;
+                    model.settings.dailySalary = 500.0;
+                    RenderFrame(first.dc(), model);
+                    model.settings.dailySalary = 987654.32;
+                    RenderFrame(second.dc(), model);
+                    CHECK(SamePixels(first.dc(), second.dc(), earned) == hide);
+                    CHECK(SamePixels(first.dc(), second.dc(), salary) == hide);
+                    if (expanded) {
+                        CHECK(SamePixels(first.dc(), second.dc(), editor));
+                        model.salaryField = MakeField(L"987654.32");
+                        RenderFrame(second.dc(), model);
+                        CHECK(!SamePixels(first.dc(), second.dc(), editor));
+                        model.salaryField = MakeField(L"500.00");
+                    }
+                }
+                DestroyFonts(fonts);
+            }
+        }
+    }
+}
+
 void SmallControlsAndMaskRenderCorrectly() {
     using namespace offwork;
     for (const bool expanded : {false, true}) {
@@ -265,6 +323,7 @@ int main() {
     g.focusedField = -1;
     OcrSilentlyUpdatesAndSavesTime();
     DropTargetRendersOnTheLayeredSurface();
+    AllMoneyOutsideEditorIsMasked();
     SmallControlsAndMaskRenderCorrectly();
     std::cout << "All lunch editor and silent OCR tests passed.\n";
 }

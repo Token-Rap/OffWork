@@ -74,7 +74,7 @@ HKCU\Software\Microsoft\Windows\CurrentVersion\Run  ->  值名 OffWork
 
 ### 金额隐藏与自动更新（0.4.0）
 
-点击「今天已经赚了」旁的小眼睛，可以在金额和 `****` 之间切换；隐藏时显示划线眼睛。状态自动保存为 `settings.ini` 的 `[window] hideEarned=1`，旧配置默认显示金额。
+点击「今天已经赚了」旁的小眼睛，可以在金额和 `****` 之间切换；隐藏时显示划线眼睛，编辑表单外的所有金额（包括已赚金额和日薪）都会隐藏。设置中的日薪输入框仍显示可编辑的数值。状态自动保存为 `settings.ini` 的 `[window] hideEarned=1`，旧配置默认显示金额。
 
 启动时及之后每六小时，后台通过 WinHTTP 访问 [GitHub 最新 Release API](https://api.github.com/repos/alertform/OffWork/releases/latest)，不使用令牌。只有发现比当前版本新的正式版本、且存在 `OffWork-Setup.exe` 安装包时，标题栏才显示小型下载图标和圆点。检查、下载或启动安装程序失败均静默处理；下载失败可再次点击图标重试。
 
