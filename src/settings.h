@@ -21,6 +21,7 @@ struct Settings {
     double dailySalary = 500.0;
     int uiScalePercent = 100;
     int opacityPercent = 100;
+    bool hideEarned = false;
     EndInputMode endInputMode = EndInputMode::EndTime;
 };
 

@@ -87,6 +87,41 @@ void DrawScaledLine(
     DeleteObject(pen);
 }
 
+void DrawScreenshotTarget(HDC dc, const RenderModel& model, const RECT& client) {
+    const int scale = model.settings.uiScalePercent;
+    const UINT dpi = model.dpi;
+    FillSolid(dc, client, kDropBackground);
+
+    RECT border = client;
+    const int inset = ScaleValue(14, scale, dpi);
+    InflateRect(&border, -inset, -inset);
+    const DWORD dashes[] = {
+        static_cast<DWORD>(std::max(1, ScaleValue(6, scale, dpi))),
+        static_cast<DWORD>(std::max(1, ScaleValue(5, scale, dpi)))};
+    const LOGBRUSH brush = {BS_SOLID, kAccent, 0};
+    HPEN pen = ExtCreatePen(
+        PS_GEOMETRIC | PS_USERSTYLE | PS_ENDCAP_ROUND | PS_JOIN_ROUND,
+        static_cast<DWORD>(std::max(1, ScaleValue(1, scale, dpi))), &brush, 2, dashes);
+    const auto oldPen = SelectObject(dc, pen);
+    const auto oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+    const int corner = ScaleValue(20, scale, dpi);
+    RoundRect(dc, border.left, border.top, border.right, border.bottom, corner, corner);
+    SelectObject(dc, oldBrush);
+    SelectObject(dc, oldPen);
+    DeleteObject(pen);
+
+    // A small image outline: no fonts, labels, child HWNDs or extra surface.
+    const int x = kWindowWidth / 2;
+    const int y = (model.expanded ? kExpandedHeight : kCollapsedHeight) / 2;
+    StrokeRounded(dc, ToRect({x - 24, y - 22, x + 24, y + 22}, scale, dpi),
+                  ScaleValue(8, scale, dpi), kAccent, ScaleValue(2, scale, dpi));
+    FillEllipse(dc, ToRect({x + 8, y - 13, x + 15, y - 6}, scale, dpi), kAccent);
+    DrawScaledLine(dc, x - 15, y + 12, x - 4, y - 1, kAccent, 2, scale, dpi);
+    DrawScaledLine(dc, x - 4, y - 1, x + 4, y + 7, kAccent, 2, scale, dpi);
+    DrawScaledLine(dc, x + 4, y + 7, x + 10, y + 1, kAccent, 2, scale, dpi);
+    DrawScaledLine(dc, x + 10, y + 1, x + 17, y + 12, kAccent, 2, scale, dpi);
+}
+
 HFONT MakeFont(int pixelSize, int weight, const wchar_t* family, int scalePercent, UINT dpi) {
     return CreateFontW(
         -ScaleValue(pixelSize, scalePercent, dpi), 0, 0, 0, weight, FALSE, FALSE, FALSE,
@@ -144,6 +179,44 @@ void DrawClose(HDC dc, const RenderModel& model) {
     const int scale = model.settings.uiScalePercent;
     DrawScaledLine(dc, left + 11, top + 11, left + 21, top + 21, kTextPrimary, 1, scale, model.dpi);
     DrawScaledLine(dc, left + 21, top + 11, left + 11, top + 21, kTextPrimary, 1, scale, model.dpi);
+}
+
+void DrawEye(HDC dc, const RenderModel& model) {
+    const int scale = model.settings.uiScalePercent;
+    const auto dpi = model.dpi;
+    const auto color = model.hot == HotElement::HideEarned ? kAccent : kTextMuted;
+    if (model.hot == HotElement::HideEarned) {
+        FillRounded(dc, ToRect(kEyeButton, scale, dpi), ScaleValue(5, scale, dpi), kButtonHover);
+    }
+    const int x = (kEyeButton.left + kEyeButton.right) / 2;
+    const int y = (kEyeButton.top + kEyeButton.bottom) / 2;
+    for (const int sign : {-1, 1}) {
+        DrawScaledLine(dc, x - 9, y, x - 4, y + sign * 5, color, 1, scale, dpi);
+        DrawScaledLine(dc, x - 4, y + sign * 5, x + 4, y + sign * 5, color, 1, scale, dpi);
+        DrawScaledLine(dc, x + 4, y + sign * 5, x + 9, y, color, 1, scale, dpi);
+    }
+    FillRounded(dc, ToRect({x - 2, y - 2, x + 3, y + 3}, scale, dpi), ScaleValue(3, scale, dpi), color);
+    if (model.settings.hideEarned) {
+        DrawScaledLine(dc, x - 9, y - 8, x + 9, y + 8, kBackground, 3, scale, dpi);
+        DrawScaledLine(dc, x - 9, y - 8, x + 9, y + 8, color, 1, scale, dpi);
+    }
+}
+
+void DrawUpdate(HDC dc, const RenderModel& model) {
+    if (!model.updateAvailable) return;
+    const int scale = model.settings.uiScalePercent;
+    const auto dpi = model.dpi;
+    const auto color = model.updateDownloading ? kTextMuted : kAccent;
+    if (model.hot == HotElement::Update) {
+        FillRounded(dc, ToRect(kUpdateButton, scale, dpi), ScaleValue(5, scale, dpi), kButtonHover);
+    }
+    DrawScaledLine(dc, 253, 20, 253, 32, color, 1, scale, dpi);
+    DrawScaledLine(dc, 248, 27, 253, 32, color, 1, scale, dpi);
+    DrawScaledLine(dc, 253, 32, 258, 27, color, 1, scale, dpi);
+    DrawScaledLine(dc, 247, 35, 259, 35, color, 1, scale, dpi);
+    if (!model.updateDownloading) {
+        FillRounded(dc, ToRect({260, 15, 265, 20}, scale, dpi), ScaleValue(3, scale, dpi), kAccent);
+    }
 }
 
 void DrawChevron(HDC dc, const RenderModel& model) {
@@ -381,8 +454,13 @@ std::size_t CaretIndexFromX(
 // -- hit testing ------------------------------------------------------------
 
 HotElement HitTest(POINT point, const RenderModel& model) {
+    if (model.screenshotDragActive) return HotElement::None;
     const int scale = model.settings.uiScalePercent;
     const UINT dpi = model.dpi;
+
+    if (Contains(ToRect(kEyeButton, scale, dpi), point)) return HotElement::HideEarned;
+    if (model.updateAvailable && !model.updateDownloading &&
+        Contains(ToRect(kUpdateButton, scale, dpi), point)) return HotElement::Update;
 
     if (Contains(ToRect(kPinButton, scale, dpi), point)) {
         return HotElement::Pin;
@@ -440,6 +518,11 @@ int OpacityFromX(int clientX, int scalePercent, UINT dpi) {
 // -- frame ------------------------------------------------------------------
 
 void RenderFrame(HDC dc, const RenderModel& model) {
+    if (model.screenshotDragActive) {
+        const SIZE size = WindowSizeFor(model.settings.uiScalePercent, model.dpi, model.expanded);
+        DrawScreenshotTarget(dc, model, {0, 0, size.cx, size.cy});
+        return;
+    }
     if (model.fonts == nullptr) {
         return;
     }
@@ -481,6 +564,7 @@ void RenderFrame(HDC dc, const RenderModel& model) {
                     ScaleValue(8, scale, dpi), RGB(196, 43, 58));
     }
     DrawClose(dc, model);
+    DrawUpdate(dc, model);
 
     const int nowSeconds =
         model.now.wHour * 3600 + model.now.wMinute * 60 + model.now.wSecond;
@@ -545,7 +629,8 @@ void RenderFrame(HDC dc, const RenderModel& model) {
                    model.fonts->label, kTextSecondary);
     wchar_t earned[64] = {};
     swprintf_s(earned, L"¥%.2f", snapshot.earned);
-    DrawTextInRect(dc, earned, ToRect(kEarnedAmount, scale, dpi),
+    DrawEye(dc, model);
+    DrawTextInRect(dc, model.settings.hideEarned ? L"****" : earned, ToRect(kEarnedAmount, scale, dpi),
                    model.fonts->amount, kEarned);
     wchar_t salary[64] = {};
     swprintf_s(salary, L"日薪 ¥%.2f", model.settings.dailySalary);
@@ -559,9 +644,6 @@ void RenderFrame(HDC dc, const RenderModel& model) {
     DrawTextInRect(dc, L"设置", ToRect(kSettingsLabel, scale, dpi),
                    model.fonts->button, kTextPrimary);
     DrawChevron(dc, model);
-    FillRounded(dc, ToRect(kOcrDropZone, scale, dpi), ScaleValue(3, scale, dpi), kInputBackground);
-    DrawTextInRect(dc, L"拖入打卡截图 · PNG / JPG / BMP", ToRect(kOcrDropZone, scale, dpi),
-        model.fonts->tiny, kTextSecondary, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
     if (!model.expanded) {
         return;

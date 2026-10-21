@@ -81,6 +81,7 @@ std::wstring SettingsFilePath() {
 
 Settings LoadSettings(const std::wstring& path) {
     Settings settings;
+    settings.hideEarned = GetPrivateProfileIntW(L"window", L"hideEarned", 0, path.c_str()) == 1;
     settings.startMinutes = GetPrivateProfileIntW(
         L"work", L"startMinutes", settings.startMinutes, path.c_str());
     settings.endMinutes = GetPrivateProfileIntW(
@@ -119,6 +120,7 @@ Settings LoadSettings(const std::wstring& path) {
 
 void SaveSettings(const std::wstring& path, const Settings& settings) {
     const Settings normalized = NormalizeSettings(settings);
+    WritePrivateProfileStringW(L"window", L"hideEarned", normalized.hideEarned ? L"1" : L"0", path.c_str());
     wchar_t value[64] = {};
 
     swprintf_s(value, L"%d", normalized.startMinutes);

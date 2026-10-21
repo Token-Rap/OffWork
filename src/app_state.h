@@ -13,6 +13,7 @@
 #include "text_field.h"
 #include "theme.h"
 #include "tray_icon.h"
+#include "updater.h"
 
 #include <windows.h>
 
@@ -43,6 +44,7 @@ struct AppState {
     UINT taskbarCreatedMessage = 0;
     TrayIcon trayIcon;
     ReminderState reminder;
+    Updater updater;
 
     Settings settings;
     std::wstring settingsPath;
@@ -51,6 +53,7 @@ struct AppState {
     bool pinned = true;
     bool autostartEnabled = false;
     bool editDeductLunch = false;
+    bool screenshotDragActive = false;
     std::future<OcrResult> ocrTask;
     EndInputMode editEndInputMode = EndInputMode::EndTime;
     HotElement hot = HotElement::None;

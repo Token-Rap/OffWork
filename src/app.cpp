@@ -5,6 +5,7 @@
 #include "app_tray.h"
 #include "app_view.h"
 #include "autostart.h"
+#include "drop_target.h"
 #include "render.h"
 #include "resource.h"
 #include "settings.h"
@@ -13,8 +14,8 @@
 #include <commctrl.h>
 #include <dwmapi.h>
 #include <windowsx.h>
-#include <shellapi.h>
-#include <vector>
+#include <new>
+#include <ole2.h>
 
 #include <algorithm>
 #include <cmath>
@@ -135,6 +136,11 @@ void EndResize() {
 }
 
 // -- window proc ------------------------------------------------------------
+void SetScreenshotDragActive(bool active) {
+    g.screenshotDragActive = active;
+    Present();
+}
+
 LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     if (HandleTrayMessage(message, wParam, lParam)) {
         return 0;
@@ -143,7 +149,6 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
     switch (message) {
         case WM_CREATE: {
             g.window = window;
-            DragAcceptFiles(window, TRUE);
             g.dpi = GetDpiForWindow(window);
             g.icon = static_cast<HICON>(LoadImageW(
                 GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDI_OFFWORK),
@@ -156,6 +161,13 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             BOOL darkMode = TRUE;
             DwmSetWindowAttribute(window, 20, &darkMode, sizeof(darkMode));
             SetTimer(window, kClockTimer, 1000, nullptr);
+            auto* target = new (std::nothrow) ScreenshotDropTarget(
+                SetScreenshotDragActive, BeginScreenshotOcr);
+            if (target == nullptr) return -1;
+            const HRESULT registered = RegisterDragDrop(window, target);
+            target->Release(); // RegisterDragDrop holds the window's reference.
+            if (FAILED(registered)) return -1;
+            g.updater.Check();
             return 0;
         }
 
@@ -165,6 +177,14 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 // painting depends on visibility.
                 TickShiftReminder();
                 PollScreenshotOcr();
+                // A std::async OCR future waits at process teardown. Keep the
+                // window alive until it is consumed so setup can replace us.
+                if (!g.ocrTask.valid() && g.updater.Poll()) {
+                    DestroyWindow(window);
+                    return 0;
+                }
+                g.updater.Check();
+                g.trayIcon.TickBalloon();
                 if (IsWindowVisible(window)) {
                     Present();
                 }
@@ -173,23 +193,6 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 Present();
             }
             return 0;
-
-        case WM_DROPFILES: {
-            const auto drop = reinterpret_cast<HDROP>(wParam);
-            const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
-            std::wstring path;
-            if (count == 1) {
-                const UINT length = DragQueryFileW(drop, 0, nullptr, 0);
-                std::vector<wchar_t> buffer(static_cast<std::size_t>(length) + 1);
-                DragQueryFileW(drop, 0, buffer.data(), length + 1);
-                path = buffer.data();
-            }
-            DragFinish(drop);
-            if (count != 1 || path.empty()) {
-                MessageBoxW(window, L"请每次拖入一张打卡截图。", L"截图识别", MB_OK | MB_ICONINFORMATION);
-            } else BeginScreenshotOcr(path);
-            return 0;
-        }
 
         case WM_PAINT: {
             // Content is published by UpdateLayeredWindow, never by WM_PAINT.
@@ -418,6 +421,15 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
 
             const RenderModel model = BuildModel();
             switch (HitTest(client, model)) {
+                case HotElement::HideEarned:
+                    g.settings.hideEarned = !g.settings.hideEarned;
+                    SaveSettings(g.settingsPath, g.settings);
+                    Present();
+                    break;
+                case HotElement::Update:
+                    g.updater.Download();
+                    Present();
+                    break;
                 case HotElement::Pin:
                     TogglePinned();
                     break;
@@ -541,6 +553,8 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             return 0;
 
         case WM_DESTROY:
+            RevokeDragDrop(window);
+            g.screenshotDragActive = false;
             KillTimer(window, kClockTimer);
             KillTimer(window, kCaretTimer);
             RemoveTray();
@@ -561,6 +575,9 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
 }  // namespace
 
 int RunApp(HINSTANCE instance, int showCommand) {
+    if (FAILED(OleInitialize(nullptr))) return 1;
+    struct OleScope { ~OleScope() { OleUninitialize(); } } oleScope;
+
     INITCOMMONCONTROLSEX controls = {sizeof(controls), ICC_STANDARD_CLASSES};
     InitCommonControlsEx(&controls);
 

@@ -2,7 +2,7 @@
 
 一只陪你等下班的 Windows 原生悬浮窗。
 
-填写上下班时间和日薪后，OffWork 会实时显示距离下班还有多久、今天的工作进度，以及此刻已经赚到的金额。它不需要安装运行时、不需要登录，也不会联网。
+填写上下班时间和日薪后，OffWork 会实时显示距离下班还有多久、今天的工作进度，以及此刻已经赚到的金额。它不需要安装运行时、不需要登录；截图识别在本机完成，联网仅用于检查和下载更新。
 
 ## 下载
 
@@ -70,7 +70,17 @@ HKCU\Software\Microsoft\Windows\CurrentVersion\Run  ->  值名 OffWork
 5. 拖动窗口边缘或四角可以等比例调整大小；设置里可以调不透明度和开机自启。
 6. 点关闭按钮会把窗口隐藏到系统托盘。双击托盘小猫恢复窗口；右键菜单可以显示/隐藏窗口、切换开机自启或彻底退出。
 7. 剩余有效工作时间首次降至五分钟时，会收到「距离下班还有五分钟」提醒；到达下班时间时，会收到「可以下班啦」提醒。点击通知可以恢复窗口，每种提醒每班次各一次。
-8. 把 PNG、JPG/JPEG 或 BMP 打卡截图拖到主窗口的「拖入打卡截图」区域（窗口其他位置也可接收），识别成功后自动填写上班时间并保存；时长模式会保留有效工作时长并重算下班时间。识别失败会显示中文提示。
+8. 把一张 PNG、JPG/JPEG 或 BMP 打卡截图拖到主窗口任意位置。平时没有拖放提示或固定投放区；仅在有效图片拖入时，整窗切换为淡青色背景、内缩圆角虚线框和居中图片图标，离开或放下后恢复。识别成功后静默填写上班时间并保存，不显示弹窗、通知或文字横幅，也不发声；时长模式会保留有效工作时长并重算下班时间。失败时仅用短暂、静音的中文托盘气泡提示。
+
+### 金额隐藏与自动更新（0.4.0）
+
+点击「今天已经赚了」旁的小眼睛，可以在金额和 `****` 之间切换；隐藏时显示划线眼睛。状态自动保存为 `settings.ini` 的 `[window] hideEarned=1`，旧配置默认显示金额。
+
+启动时及之后每六小时，后台通过 WinHTTP 访问 [GitHub 最新 Release API](https://api.github.com/repos/alertform/OffWork/releases/latest)，不使用令牌。只有发现比当前版本新的正式版本、且存在 `OffWork-Setup.exe` 安装包时，标题栏才显示小型下载图标和圆点。检查、下载或启动安装程序失败均静默处理；下载失败可再次点击图标重试。
+
+点击图标会把安装包下载到 `%TEMP%\OffWork-update-{GUID}\OffWork-Setup.exe`，下载期间图标变暗。下载完成后启动 `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART` 安装，应用退出以便替换文件，安装完成后自动重新启动。安装保留 `%LOCALAPPDATA%\OffWork\settings.ini` 及现有开机自启状态。免安装版使用同一更新入口，更新后运行安装版，沿用同一份本地设置。离线不影响倒计时和截图识别。
+
+如截图仍在识别，会先等识别结束再启动安装；下载失败会清理临时文件，成功使用的安装包超过一天后会在后续更新检查中清理。
 
 ### 午休与倒计时
 
@@ -83,6 +93,8 @@ HKCU\Software\Microsoft\Windows\CurrentVersion\Run  ->  值名 OffWork
 ### 截图识别与提醒
 
 截图识别使用本机 Windows.Media.Ocr，优先简体中文，不上传图片、不依赖第三方 OCR。请在 Windows 语言设置中安装简体中文的文字识别（OCR）组件。识别优先选取「上班打卡」「打卡成功」附近的时间，忽略「班次时间」「班次」「应上班」对应的排班时间；没有关键词匹配时才从其他有效时间中取最早值。支持 `08:55`、`08：55`、`08 : 55` 等形式。成功导入会替换当前上班时间和设置面板内容。
+
+拖放使用 OLE `IDropTarget`，只接收 `CF_HDROP` 中的一张受支持图片（扩展名不区分大小写）；多文件、目录、不支持的格式和非文件数据均拒绝，不触发视觉变化。临时拖入样式沿用主题配色和 GDI 绘制，通过同一 `UpdateLayeredWindow` 分层表面提交，支持展开/收起、缩放、DPI 与不透明度设置。失败气泡约 4 秒后撤下；是否显示仍由 Windows 通知设置决定。
 
 两种提醒在窗口隐藏到托盘时仍有效。启动时已经处于五分钟窗口内或已下班，不补发提醒；修改排班或通过 OCR 导入时间会重置提醒基线。长时间休眠后观察到的过期变化会静默处理，避免补发旧提醒。
 
@@ -147,18 +159,31 @@ ctest --test-dir build/release-ninja -C Release --output-on-failure
 .\build\release-ninja\OffWorkOcrImageTests.exe tests\data\dingtalk_clockin.png
 ```
 
-CTest 包含计算器、文本编辑、配置兼容、开机自启、两种提醒、OCR 纯文本解析、真实图片 OCR 和午休编辑/时长转换测试。真实图片测试会打印原始 OCR 分行文本与解析结果，并断言为 `08:55`（535 分钟）；需要本机具备中文 OCR 组件，缺失时测试失败并给出提示。
+CTest 包含计算器、文本编辑、配置兼容、开机自启、两种提醒、OCR 纯文本解析、真实图片 OCR、受支持图片扩展名、OLE 拖放接收与状态恢复、午休编辑/时长转换、OCR 静默保存、金额遮罩、更新图标命中和分层表面离屏绘制测试（展开/收起、75%–150% 缩放、96/144/192 DPI），以及纯函数 semver 比较和 Release JSON 解析测试。真实图片测试会打印原始 OCR 分行文本与解析结果，并断言为 `08:55`（535 分钟）；需要本机具备中文 OCR 组件，缺失时测试失败并给出提示。
+
+仅验证本次拖放、设置和更新变更时：
+
+```powershell
+ctest --test-dir build/release-ninja -R '^(settings|image_file|drop_target|update|app_edit)$' --output-on-failure
+```
 
 构建安装包需要 [Inno Setup 6](https://jrsoftware.org/isdl.php)（`winget install JRSoftware.InnoSetup`）：
 
 ```powershell
-& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" installer\offwork.iss
+$version = (Get-Content build/app-version.txt -Raw).Trim()
+& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" installer\offwork.iss
+# 如果复用 Ninja 构建目录：
+$version = (Get-Content build/release-ninja/app-version.txt -Raw).Trim()
+$exe = (Resolve-Path build/release-ninja/OffWork.exe).Path
+& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" "/DSourceExe=$exe" installer\offwork.iss
 ```
 
 产物位于 `build\installer\OffWork-Setup.exe`。
 
-仓库的 **Build OffWork Windows EXE** workflow 会跑测试、检查包体、构建安装包，并把 `OffWork.exe` 和 `OffWork-Setup.exe` 一起上传；打 `v*` tag 时两个文件都会发布到 Release。
+版本号唯一来源是 `CMakeLists.txt` 中的 `project(OffWork VERSION ...)`，CMake 生成 `version.h`（程序与资源版本）和 `app-version.txt`（传给 ISCC 的 `/DAppVersion`）。修改版本只需修改该处并重新配置构建。
+
+仓库的 **Build OffWork Windows EXE** workflow 会跑测试、检查包体、构建安装包，并把 `OffWork.exe` 和 `OffWork-Setup.exe` 一起上传；推送 `v*` tag 时校验 tag 与 CMake 版本一致，再创建或更新 GitHub Release 并附加两个文件。重复运行会替换同名附件。
 
 ## 隐私
 
-OffWork 不收集任何数据。上下班时间和日薪只写入当前 Windows 用户的本地配置目录；开机自启只写入当前用户的注册表启动项。
+OffWork 不收集或上传截图、上下班时间和日薪，这些数据只在本机处理或保存；开机自启只写入当前用户的注册表启动项。更新检查会连接 GitHub，发送应用版本 User-Agent；点击更新后才从 GitHub 下载官方 Release 安装包。GitHub 会接收到正常网络请求信息。

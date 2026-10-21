@@ -268,15 +268,13 @@ void SetEndInputMode(EndInputMode mode) {
 
 void BeginScreenshotOcr(const std::wstring& path) {
     if (g.ocrTask.valid()) {
-        MessageBoxW(g.window, L"正在识别上一张截图，请稍候。", L"截图识别", MB_OK | MB_ICONINFORMATION);
+        g.trayIcon.ShowBalloon(L"截图识别", L"正在识别，请稍后重试。", true);
         return;
     }
     try {
         g.ocrTask = std::async(std::launch::async, [path] { return RecognizeScreenshot(path); });
-        SetFooter(L"正在识别打卡截图…", false);
-        Present();
     } catch (...) {
-        MessageBoxW(g.window, L"无法启动截图识别，请稍后重试。", L"截图识别", MB_OK | MB_ICONWARNING);
+        g.trayIcon.ShowBalloon(L"截图识别", L"无法开始识别，请重试。", true);
     }
 }
 
@@ -304,18 +302,15 @@ void PollScreenshotOcr() {
             PopulateFields();
             SetFocusedField(-1);
             ResetShiftReminder();
-            const auto message = L"已识别上班时间 " + FormatTimeValue(*result.minutes) + L"，并保存设置。";
-            SetFooter(message, false);
-            MessageBoxW(g.window, message.c_str(), L"截图识别成功", MB_OK | MB_ICONINFORMATION);
+            ResetFooter();
+            Present();
+            return; // Success is silent: only the updated time is feedback.
         } catch (const std::invalid_argument&) {
-            result.error = L"识别时间与当前排班冲突，请先调整下班时间或工作时长。";
+            g.trayIcon.ShowBalloon(L"截图识别", L"时间与排班冲突，请调整设置。", true);
+            return;
         }
     }
-    if (!result.error.empty()) {
-        SetFooter(L"截图识别失败，请重试", true);
-        MessageBoxW(g.window, result.error.c_str(), L"截图识别", MB_OK | MB_ICONWARNING);
-    }
-    Present();
+    g.trayIcon.ShowBalloon(L"截图识别", L"识别失败，请重试清晰截图。", true);
 }
 
 // -- keyboard ---------------------------------------------------------------

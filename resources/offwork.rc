@@ -1,12 +1,13 @@
 #include "resource.h"
+#include "version.h"
 #include <winver.h>
 
 IDI_OFFWORK ICON "offwork.ico"
-1 RT_MANIFEST "app.manifest"
+1 RT_MANIFEST "offwork.manifest"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION     0,3,0,0
-PRODUCTVERSION  0,3,0,0
+FILEVERSION     OFFWORK_VERSION_RESOURCE
+PRODUCTVERSION  OFFWORK_VERSION_RESOURCE
 FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
 FILEFLAGS       0
 FILEOS          VOS_NT_WINDOWS32
@@ -19,12 +20,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "alertform"
             VALUE "FileDescription",  "OffWork 下班倒计时悬浮窗"
-            VALUE "FileVersion",      "0.3.0.0"
+            VALUE "FileVersion",      OFFWORK_VERSION_RESOURCE_STRING
             VALUE "InternalName",     "OffWork"
             VALUE "LegalCopyright",   "Copyright (C) 2026 alertform"
             VALUE "OriginalFilename", "OffWork.exe"
             VALUE "ProductName",      "OffWork"
-            VALUE "ProductVersion",   "0.3.0.0"
+            VALUE "ProductVersion",   OFFWORK_VERSION_RESOURCE_STRING
         END
     END
     BLOCK "VarFileInfo"

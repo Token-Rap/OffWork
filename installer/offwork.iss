@@ -12,7 +12,7 @@
   #define SourceExe "..\build\Release\OffWork.exe"
 #endif
 #ifndef AppVersion
-  #define AppVersion "0.3.0"
+  #error AppVersion must be supplied from the CMake build/app-version.txt
 #endif
 
 #define AppName "OffWork"
@@ -136,15 +136,17 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: deskto
 ; The app reads and writes this exact key and value name (src/autostart.h), and
 ; stores the path quoted so a directory with spaces still launches.
 Root: HKCU; Subkey: "{#RunKey}"; ValueType: string; ValueName: "{#RunValueName}"; \
-    ValueData: """{app}\{#AppExeName}"""; Flags: uninsdeletevalue; Tasks: autostart
+    ValueData: """{app}\{#AppExeName}"""; Flags: uninsdeletevalue; Tasks: autostart; Check: not WizardSilent
 ; Without the task, make sure no stale value survives an install, and still make
 ; uninstall remove one the user later switched on from inside the app.
 Root: HKCU; Subkey: "{#RunKey}"; ValueType: none; ValueName: "{#RunValueName}"; \
-    Flags: deletevalue uninsdeletevalue; Tasks: not autostart
+    Flags: deletevalue uninsdeletevalue; Tasks: not autostart; Check: not WizardSilent
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchAfterInstall}"; \
     Flags: nowait postinstall skipifsilent
+; A separate silent entry relaunches after an in-app update without a checkbox.
+Filename: "{app}\{#AppExeName}"; Flags: nowait skipifnotsilent
 
 [Code]
 // Ask a running OffWork to exit before its files are replaced or removed.
@@ -200,6 +202,11 @@ end;
 // upgrades by an installer that no longer sets one.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
+  // A portable user's first silent update skips the registry task entries,
+  // so it has no previous uninsdeletevalue record. Always remove an autostart
+  // value enabled later from inside the app, including on that first install.
+  if CurUninstallStep = usUninstall then
+    RegDeleteValue(HKEY_CURRENT_USER, '{#RunKey}', '{#RunValueName}');
   if CurUninstallStep = usAppMutexCheck then
     if not CloseRunningOffWork() then
       MsgBox('OffWork 仍在运行, 程序文件可能无法删除。卸载完成后请在托盘图标上右键选择「退出」, 再手动删除安装目录。',

@@ -124,6 +124,22 @@ void EndInputModeRoundTripsThroughTheIniFile() {
 }  // namespace
 
 int main() {
+    {
+        const auto maskPath = std::filesystem::temp_directory_path() /
+            (L"offwork-mask-" + std::to_wstring(GetCurrentProcessId()) + L".ini");
+        std::filesystem::remove(maskPath);
+        CHECK(!offwork::LoadSettings(maskPath.wstring()).hideEarned);
+        Settings masked;
+        masked.hideEarned = true;
+        offwork::SaveSettings(maskPath.wstring(), masked);
+        CHECK(offwork::LoadSettings(maskPath.wstring()).hideEarned);
+        masked.hideEarned = false;
+        offwork::SaveSettings(maskPath.wstring(), masked);
+        CHECK(!offwork::LoadSettings(maskPath.wstring()).hideEarned);
+        WritePrivateProfileStringW(L"window", L"hideEarned", nullptr, maskPath.c_str());
+        CHECK(!offwork::LoadSettings(maskPath.wstring()).hideEarned);
+        std::filesystem::remove(maskPath);
+    }
     ScaleIsClampedToTheSupportedRange();
     OpacityIsClampedToTheSliderRange();
     AnImpossibleWorkDayFallsBackToTheDefault();

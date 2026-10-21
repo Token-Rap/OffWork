@@ -25,6 +25,9 @@ RenderModel BuildModel() {
     model.expanded = g.expanded;
     model.pinned = g.pinned;
     model.autostartEnabled = g.autostartEnabled;
+    model.screenshotDragActive = g.screenshotDragActive;
+    model.updateAvailable = g.updater.Available();
+    model.updateDownloading = g.updater.Downloading();
     model.editEndInputMode = g.editEndInputMode;
     model.hot = g.hot;
     model.icon = g.icon;

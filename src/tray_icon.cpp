@@ -41,7 +41,7 @@ bool TrayIcon::AddToShell() {
     return added_;
 }
 
-bool TrayIcon::ShowBalloon(const wchar_t* title, const wchar_t* body) {
+bool TrayIcon::ShowBalloon(const wchar_t* title, const wchar_t* body, bool subtle) {
     if (owner_ == nullptr || !added_) {
         return false;
     }
@@ -49,14 +49,29 @@ bool TrayIcon::ShowBalloon(const wchar_t* title, const wchar_t* body) {
     data.cbSize = sizeof(data);
     data.hWnd = owner_;
     data.uID = kTrayIconId;
-    data.uFlags = NIF_INFO;
+    data.uFlags = NIF_INFO | (subtle ? NIF_REALTIME : 0);
     wcscpy_s(data.szInfoTitle, title);
     wcscpy_s(data.szInfo, body);
     // The cat, not the generic "i": NIIF_USER takes the balloon icon from
     // hBalloonIcon when NIIF_LARGE_ICON is set.
-    data.dwInfoFlags = NIIF_USER | NIIF_LARGE_ICON;
+    data.dwInfoFlags = subtle ? NIIF_NONE | NIIF_NOSOUND | NIIF_RESPECT_QUIET_TIME
+                             : NIIF_USER | NIIF_LARGE_ICON;
     data.hBalloonIcon = icon_;
-    return Shell_NotifyIconW(NIM_MODIFY, &data) != FALSE;
+    const bool shown = Shell_NotifyIconW(NIM_MODIFY, &data) != FALSE;
+    balloonDeadline_ = shown && subtle ? GetTickCount64() + 4000 : 0;
+    return shown;
+}
+
+void TrayIcon::TickBalloon() {
+    if (balloonDeadline_ == 0 || GetTickCount64() < balloonDeadline_) return;
+    balloonDeadline_ = 0;
+    if (!added_) return;
+    NOTIFYICONDATAW data = {};
+    data.cbSize = sizeof(data);
+    data.hWnd = owner_;
+    data.uID = kTrayIconId;
+    data.uFlags = NIF_INFO; // Empty szInfo removes the current balloon.
+    Shell_NotifyIconW(NIM_MODIFY, &data);
 }
 
 void TrayIcon::Reinstall() {

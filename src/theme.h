@@ -49,6 +49,7 @@ inline constexpr COLORREF kProgressTrack = RGB(135, 153, 176);
 inline constexpr COLORREF kToggleOff = RGB(56, 72, 94);
 inline constexpr COLORREF kEarned = RGB(127, 224, 250);
 inline constexpr COLORREF kOnAccent = RGB(4, 34, 51);
+inline constexpr COLORREF kDropBackground = RGB(10, 34, 52);
 
 // -- title bar --------------------------------------------------------------
 
@@ -57,6 +58,7 @@ inline constexpr LogicalRect kIcon{16, 12, 48, 44};
 inline constexpr LogicalRect kTitleText{56, 7, 220, 29};
 inline constexpr LogicalRect kDateTimeText{56, 27, 235, 46};
 inline constexpr LogicalRect kPinButton{272, 12, 304, 44};
+inline constexpr LogicalRect kUpdateButton{240, 12, 266, 44};
 inline constexpr LogicalRect kCloseButton{316, 12, 348, 44};
 
 // -- summary ----------------------------------------------------------------
@@ -66,6 +68,7 @@ inline constexpr LogicalRect kCountdownText{20, 87, 340, 132};
 inline constexpr LogicalRect kProgressTrackRect{20, 144, 340, 147};
 inline constexpr LogicalRect kProgressText{180, 152, 340, 174};
 inline constexpr LogicalRect kEarnedLabel{20, 184, 200, 204};
+inline constexpr LogicalRect kEyeButton{134, 180, 162, 208};
 inline constexpr LogicalRect kEarnedAmount{20, 204, 250, 244};
 inline constexpr LogicalRect kSalaryText{220, 217, 340, 241};
 inline constexpr LogicalRect kSettingsButton{20, 266, 340, 304};
@@ -75,7 +78,6 @@ inline constexpr int kChevronCenterY = 285;
 
 // -- settings panel ---------------------------------------------------------
 // Two-column fields keep the expanded panel within the existing height.
-inline constexpr LogicalRect kOcrDropZone{20, 243, 340, 261};
 inline constexpr LogicalRect kPanel{20, 306, 340, 646};
 inline constexpr LogicalRect kStartLabel{37, 313, 175, 333};
 inline constexpr LogicalRect kStartBox{37, 334, 175, 366};
@@ -106,6 +108,8 @@ inline constexpr int kInputPadding = 10;
 
 enum class HotElement {
     None,
+    HideEarned,
+    Update,
     Pin,
     Close,
     Settings,

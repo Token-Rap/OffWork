@@ -1,5 +1,6 @@
 #include "ocr.h"
 #include "ocr_time.h"
+#include "image_file.h"
 
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Foundation.Collections.h>
@@ -9,19 +10,13 @@
 #include <winrt/Windows.Storage.h>
 #include <winrt/Windows.Storage.Streams.h>
 
-#include <algorithm>
-#include <cwctype>
 #include <filesystem>
 
 namespace offwork {
 OcrResult RecognizeScreenshot(const std::wstring& path) {
     OcrResult result;
     try {
-        auto extension = std::filesystem::path(path).extension().wstring();
-        std::transform(extension.begin(), extension.end(), extension.begin(),
-            [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
-        if (extension != L".png" && extension != L".jpg" &&
-            extension != L".jpeg" && extension != L".bmp") {
+        if (!IsSupportedImageFile(path)) {
             result.error = L"请拖入 PNG、JPG 或 BMP 格式的打卡截图。";
             return result;
         }

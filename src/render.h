@@ -34,6 +34,9 @@ struct RenderModel {
     bool expanded = false;
     bool pinned = true;
     bool autostartEnabled = false;
+    bool screenshotDragActive = false;
+    bool updateAvailable = false;
+    bool updateDownloading = false;
     EndInputMode editEndInputMode = EndInputMode::EndTime;
     HotElement hot = HotElement::None;
     HICON icon = nullptr;
