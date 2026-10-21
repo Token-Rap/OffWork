@@ -52,7 +52,18 @@ bool IsCharAllowed(wchar_t character, FieldFilter filter) {
     if (character >= L'0' && character <= L'9') {
         return true;
     }
-    return character == SeparatorFor(filter);
+    return filter != FieldFilter::Integer && character == SeparatorFor(filter);
+}
+
+bool ParseMinuteDurationText(std::wstring_view text, int& minutes) {
+    int value = 0;
+    for (const wchar_t digit : text) {
+        if (digit < L'0' || digit > L'9') return false;
+        value = value * 10 + digit - L'0';
+        if (value >= 24 * 60) return false;
+    }
+    minutes = value;
+    return true;
 }
 
 FieldState MoveCaretTo(const FieldState& state, std::size_t position, bool extend) {

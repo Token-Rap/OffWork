@@ -110,8 +110,7 @@ PhaseNow CurrentPhase() {
     try {
         const auto snapshot = CalculateWorkday(
             nowSeconds, g.settings.startMinutes, g.settings.endMinutes,
-            g.settings.dailySalary, g.settings.lunchStartMinutes,
-            g.settings.lunchEndMinutes, g.settings.deductLunch);
+            g.settings.dailySalary, g.settings.lunchDurationMinutes, g.settings.deductLunch);
         result.phase = snapshot.phase;
         result.remainingSeconds = snapshot.remainingSeconds;
     } catch (...) {

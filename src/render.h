@@ -47,10 +47,9 @@ struct RenderModel {
     FieldState startField;
     FieldState endField;
     FieldState salaryField;
-    FieldState lunchStartField;
-    FieldState lunchEndField;
+    FieldState lunchDurationField;
     bool editDeductLunch = false;
-    int focusedField = -1;  // 0 start, 1 end, 2 salary, -1 none
+    int focusedField = -1;  // 0 start, 1 end, 2 salary, 3 lunch duration, -1 none
     bool caretVisible = false;
 
     std::wstring footerText;

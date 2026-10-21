@@ -49,6 +49,20 @@ void FilterAcceptsOnlyItsOwnCharacters() {
     CHECK(IsCharAllowed(L'.', FieldFilter::Decimal));
     CHECK(!IsCharAllowed(L':', FieldFilter::Decimal));
     CHECK(!IsCharAllowed(L'-', FieldFilter::Decimal));
+    CHECK(IsCharAllowed(L'6', FieldFilter::Integer));
+    CHECK(!IsCharAllowed(L':', FieldFilter::Integer));
+    CHECK(!IsCharAllowed(L'.', FieldFilter::Integer));
+    CHECK(!IsCharAllowed(L'-', FieldFilter::Integer));
+    CHECK(InsertText(MakeField(L""), L"6:0.x", FieldFilter::Integer, 4).text == L"60");
+    int minutes = -1;
+    for (const auto text : {L"", L"0", L"0000"}) {
+        CHECK(offwork::ParseMinuteDurationText(text, minutes) && minutes == 0);
+    }
+    CHECK(offwork::ParseMinuteDurationText(L"60", minutes) && minutes == 60);
+    CHECK(offwork::ParseMinuteDurationText(L"1439", minutes) && minutes == 1439);
+    for (const auto text : {L"-1", L"1440", L"60.5", L"12:00", L"60x", L" 60", L"999999999999999999"}) {
+        CHECK(!offwork::ParseMinuteDurationText(text, minutes));
+    }
 }
 
 void InsertPutsTextAtTheCaret() {

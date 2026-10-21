@@ -15,6 +15,7 @@ namespace offwork {
 enum class FieldFilter {
     Time,     // digits plus a single colon
     Decimal,  // digits plus a single dot
+    Integer,  // digits only
 };
 
 struct FieldState {
@@ -31,6 +32,9 @@ bool HasSelection(const FieldState& state);
 std::wstring SelectedText(const FieldState& state);
 
 bool IsCharAllowed(wchar_t character, FieldFilter filter);
+
+// Whole minutes in [0, 1439]; an empty optional duration means zero.
+bool ParseMinuteDurationText(std::wstring_view text, int& minutes);
 
 FieldState MoveCaretTo(const FieldState& state, std::size_t position, bool extend);
 FieldState MoveCaret(const FieldState& state, int delta, bool extend);

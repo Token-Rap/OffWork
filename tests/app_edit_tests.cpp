@@ -23,6 +23,12 @@ void SmallControlsAndMaskRenderCorrectly() {
                             ScaleValue((r.top + r.bottom) / 2, scale, dpi)};
                 };
                 CHECK(HitTest(center(kEyeButton), m) == HotElement::HideEarned);
+                if (expanded) {
+                    CHECK(HitTest(center(kLunchDurationBox), m) == HotElement::LunchDurationField);
+                    CHECK(FieldIndexOf(HotElement::LunchDurationField) == 3);
+                    CHECK(HitTest(POINT{ScaleValue(300, scale, dpi), ScaleValue(470, scale, dpi)}, m)
+                          == HotElement::LunchDurationField);
+                }
                 CHECK(HitTest(center(kUpdateButton), m) == HotElement::None);
                 m.updateAvailable = true;
                 CHECK(HitTest(center(kUpdateButton), m) == HotElement::Update);
@@ -164,8 +170,7 @@ void OcrSilentlyUpdatesAndSavesTime() {
 
     g.settings = Settings{};
     g.settings.endInputMode = EndInputMode::WorkDuration;
-    g.settings.lunchStartMinutes = 720;
-    g.settings.lunchEndMinutes = 810;
+    g.settings.lunchDurationMinutes = 90;
     g.settings.deductLunch = true;
     PopulateFields();
     CompleteOcr({{}, 535, {}});
@@ -197,43 +202,67 @@ int main() {
     using namespace offwork;
     g.settings = Settings{};
     PopulateFields();
-    CHECK(g.fields[3].text.empty() && g.fields[4].text.empty());
+    CHECK(g.fields[3].text.empty());
+    CHECK(!IsCharAllowed(L':', FilterFor(3)));
+    CHECK(!IsCharAllowed(L'.', FilterFor(3)));
+    CHECK(IsCharAllowed(L'6', FilterFor(3)));
     Settings parsed;
     CHECK(ReadFieldSettings(parsed));
-    CHECK(!parsed.deductLunch);
-
-    g.fields[3] = MakeField(L"12:00");
-    CHECK(!ReadFieldSettings(parsed)); // Partial lunch must not be silently lost.
-    g.fields[4] = MakeField(L"13:30");
-    g.editDeductLunch = true;
+    CHECK(parsed.lunchDurationMinutes == 0 && !parsed.deductLunch);
+    ToggleDeductLunch();
+    CHECK(!g.editDeductLunch && g.footerIsError);
+    g.fields[3] = MakeField(L"60");
+    ToggleDeductLunch();
+    CHECK(g.editDeductLunch && !g.footerIsError);
     CHECK(ReadFieldSettings(parsed));
-    CHECK(parsed.lunchStartMinutes == 720 && parsed.lunchEndMinutes == 810);
-    CHECK(parsed.deductLunch);
+    CHECK(parsed.lunchDurationMinutes == 60 && parsed.deductLunch);
     SetEndInputMode(EndInputMode::WorkDuration);
-    CHECK(g.fields[1].text == L"7.5"); // 09:00–18:00 minus 90 minutes.
-    g.fields[1] = MakeField(L"8");
+    CHECK(g.fields[1].text == L"8"); // 09:00 to 18:00 minus 60 minutes.
+    g.fields[1] = MakeField(L"8.5");
     CHECK(ReadFieldSettings(parsed));
     CHECK(parsed.endMinutes == 1110); // 18:30
     SetEndInputMode(EndInputMode::EndTime);
     CHECK(g.fields[1].text == L"18:30");
     g.settings = parsed;
     PopulateFields();
-    CHECK(g.fields[1].text == L"8");
-    CHECK(g.fields[3].text == L"12:00" && g.fields[4].text == L"13:30");
+    CHECK(g.fields[1].text == L"8.5" && g.fields[3].text == L"60");
     CHECK(g.editDeductLunch);
-    g.editDeductLunch = false;
+    ToggleDeductLunch();
     CHECK(ReadFieldSettings(parsed));
-    CHECK(parsed.endMinutes == 1020); // 17:00 without lunch deduction.
-    g.fields[3] = MakeField(L"");
-    g.fields[4] = MakeField(L"");
-    CHECK(ReadFieldSettings(parsed));
-    CHECK(parsed.lunchStartMinutes == -1 && !parsed.deductLunch);
-    g.fields[3] = MakeField(L"12:00");
-    g.fields[4] = MakeField(L"12:00");
-    CHECK(!ReadFieldSettings(parsed));
-    g.fields[4] = MakeField(L"11:59");
+    CHECK(parsed.endMinutes == 1050); // 17:30 without lunch deduction.
     g.editDeductLunch = true;
-    CHECK(!ReadFieldSettings(parsed)); // Cannot represent an >=24h duration.
+    for (const auto text : {L"", L"0"}) {
+        g.fields[3] = MakeField(text);
+        CHECK(ReadFieldSettings(parsed));
+        CHECK(parsed.lunchDurationMinutes == 0 && !parsed.deductLunch);
+        CHECK(parsed.endMinutes == 1050);
+    }
+    for (const auto text : {L"12:00", L"60.5", L"-1", L"1440", L"abc", L"60x", L"999999999999999999"}) {
+        g.fields[3] = MakeField(text);
+        CHECK(!ReadFieldSettings(parsed));
+    }
+    g.fields[3] = MakeField(L"930");
+    CHECK(!ReadFieldSettings(parsed)); // 8.5h work + 15.5h lunch is not representable.
+    g.fields[3] = MakeField(L"929");
+    CHECK(ReadFieldSettings(parsed));
+    CHECK(parsed.endMinutes == 539); // 23h59 shift.
+    g.editEndInputMode = EndInputMode::EndTime;
+    g.fields[1] = MakeField(L"10:00");
+    g.fields[3] = MakeField(L"60");
+    CHECK(!ReadFieldSettings(parsed)); // No effective work remains.
+    g.fields[0] = MakeField(L"22:00");
+    g.fields[1] = MakeField(L"8");
+    g.editEndInputMode = EndInputMode::WorkDuration;
+    CHECK(ReadFieldSettings(parsed));
+    CHECK(parsed.endMinutes == 420); // 07:00 next day.
+    g.expanded = true;
+    g.focusedField = 3;
+    FocusNextField(1);
+    CHECK(g.focusedField == 0);
+    FocusNextField(-1);
+    CHECK(g.focusedField == 3);
+    g.expanded = false;
+    g.focusedField = -1;
     OcrSilentlyUpdatesAndSavesTime();
     DropTargetRendersOnTheLayeredSurface();
     SmallControlsAndMaskRenderCorrectly();

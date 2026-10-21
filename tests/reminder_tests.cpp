@@ -193,14 +193,27 @@ void FiveMinuteStartupResetAndStaleAreSilent() {
     CHECK(!d.notifyFiveMinutes);
 }
 
-void FiveMinuteReminderUsesLunchAdjustedRemaining() {
-    auto snapshot = CalculateWorkday(At(11, 54, 59), 9*60, 13*60, 500, 12*60, 13*60, true);
-    auto state = ResetReminder(snapshot.phase, snapshot.remainingSeconds);
-    snapshot = CalculateWorkday(At(11, 55), 9*60, 13*60, 500, 12*60, 13*60, true);
-    const auto d = TickReminder(state, snapshot.phase, SecondsSinceShiftEnd(At(11,55), 13*60), snapshot.remainingSeconds);
-    CHECK(d.notifyFiveMinutes);
-    CHECK(snapshot.remainingSeconds == 300);
-    CHECK(!TickReminder(d.next, WorkdayPhase::Working, kDay-3600, 0).notifyFiveMinutes);
+void FiveMinuteReminderUsesActualEndWithLunchDuration() {
+    for (const int end : {18 * 60, 7 * 60}) {
+        const int start = end == 1080 ? 540 : 1320;
+        auto snapshot = CalculateWorkday(end * 60 - 361, start, end, 500, 60, true);
+        auto state = ResetReminder(snapshot.phase, snapshot.remainingSeconds);
+        snapshot = CalculateWorkday(end * 60 - 360, start, end, 500, 60, true);
+        auto d = TickReminder(state, snapshot.phase, kDay - 360, snapshot.remainingSeconds);
+        CHECK(!d.notifyFiveMinutes); // Do not fire an hour early.
+        snapshot = CalculateWorkday(end * 60 - 301, start, end, 500, 60, true);
+        d = TickReminder(d.next, snapshot.phase, kDay - 301, snapshot.remainingSeconds);
+        snapshot = CalculateWorkday(end * 60 - 300, start, end, 500, 60, true);
+        d = TickReminder(d.next, snapshot.phase, kDay - 300, snapshot.remainingSeconds);
+        CHECK(d.notifyFiveMinutes && snapshot.remainingSeconds == 300);
+        d = TickReminder(d.next, snapshot.phase, kDay - 299, 299);
+        CHECK(!d.notifyFiveMinutes);
+        snapshot = CalculateWorkday(end * 60, start, end, 500, 60, true);
+        d = TickReminder(d.next, snapshot.phase, 0, snapshot.remainingSeconds);
+        CHECK(d.notify && !d.notifyFiveMinutes);
+    }
+    CHECK(offwork::EndMinutesWithLunch(540, 480, 60, true) == 1080);
+    CHECK(offwork::EndMinutesWithLunch(1320, 480, 60, true) == 420);
 }
 
 }  // namespace
@@ -208,7 +221,7 @@ void FiveMinuteReminderUsesLunchAdjustedRemaining() {
 int main() {
     FiveMinuteReminderTransitions();
     FiveMinuteStartupResetAndStaleAreSilent();
-    FiveMinuteReminderUsesLunchAdjustedRemaining();
+    FiveMinuteReminderUsesActualEndWithLunchDuration();
     SecondsSinceShiftEndWrapsAroundMidnight();
     TransitionNotifiesExactlyOnce();
     RepeatedAfterWorkTicksNeverRepeat();

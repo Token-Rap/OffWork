@@ -83,29 +83,43 @@ int main() {
     }
     CHECK(invalidSalary);
 
-    // Lunch is excluded from both the numerator and denominator.
-    auto lunch = CalculateWorkday(12 * 3600, 540, 1080, 750, 720, 810, true);
-    auto during = CalculateWorkday(13 * 3600, 540, 1080, 750, 720, 810, true);
-    CHECK(lunch.remainingSeconds == 270 * 60);
-    CHECK(during.remainingSeconds == lunch.remainingSeconds);
-    CHECK(Near(lunch.progress, 0.4));
-    CHECK(Near(during.earned, 300));
-    CHECK(CalculateWorkday(14 * 3600, 540, 1080, 750, 720, 810, true).remainingSeconds == 240 * 60);
-    CHECK(CalculateWorkday(13 * 3600, 540, 1080, 750, 720, 810, false).remainingSeconds == 300 * 60);
-    CHECK(CalculateWorkday(13 * 3600, 540, 1080, 750, -1, -1, true).remainingSeconds == 300 * 60);
-    CHECK(offwork::EndMinutesWithLunch(540, 480, 720, 810, true) == 1110);
-    CHECK(offwork::EndMinutesWithLunch(540, 120, 720, 810, true) == 660);
-    CHECK(offwork::EndMinutesWithLunch(750, 60, 720, 810, true) == 870);
-    CHECK(offwork::EndMinutesWithLunch(1320, 480, 1410, 30, true) == 420);
-    auto night = CalculateWorkday(0, 1320, 360, 700, 1410, 30, true);
-    CHECK(night.remainingSeconds == 330 * 60);
-    CHECK(Near(night.earned, 150));
-    CHECK(CalculateWorkday(23 * 3600 + 30 * 60, 1320, 360, 700, 1410, 30, true).remainingSeconds == night.remainingSeconds);
-    CHECK(offwork::EffectiveWorkMinutes(540, 780, 720, 810, true) == 180);
-    bool noWork = false;
-    try { (void)CalculateWorkday(12*3600, 720, 780, 500, 720, 810, true); }
-    catch (const std::invalid_argument&) { noWork = true; }
-    CHECK(noWork);
+    // Countdown is real time to end; effective work is credited from the end backwards.
+    const auto lunch = CalculateWorkday(12 * 3600, 540, 1080, 800, 60, true);
+    CHECK(lunch.remainingSeconds == 6 * 3600);
+    CHECK(Near(lunch.progress, 0.25));
+    CHECK(Near(lunch.earned, 200));
+    const auto halfway = CalculateWorkday(14 * 3600, 540, 1080, 800, 60, true);
+    CHECK(halfway.remainingSeconds == 4 * 3600);
+    CHECK(Near(halfway.progress, 0.5));
+    CHECK(Near(halfway.earned, 400));
+    CHECK(Near(CalculateWorkday(9 * 3600 + 30 * 60, 540, 1080, 800, 60, true).progress, 0));
+    CHECK(Near(CalculateWorkday(10 * 3600, 540, 1080, 800, 60, true).progress, 0));
+    CHECK(Near(CalculateWorkday(8 * 3600, 540, 1080, 800, 60, true).earned, 0));
+    CHECK(CalculateWorkday(8 * 3600, 540, 1080, 800, 60, true).remainingSeconds == 3600);
+    CHECK(Near(CalculateWorkday(18 * 3600, 540, 1080, 800, 60, true).earned, 800));
+    CHECK(Near(CalculateWorkday(13 * 3600, 540, 1080, 900, 60, false).earned, 400));
+    CHECK(Near(CalculateWorkday(13 * 3600, 540, 1080, 900, 0, true).earned, 400));
+    CHECK(offwork::EndMinutesWithLunch(540, 480, 60, true) == 1080);
+    CHECK(offwork::EndMinutesWithLunch(540, 120, 60, true) == 720);
+    CHECK(offwork::EndMinutesWithLunch(540, 480, 60, false) == 1020);
+    CHECK(offwork::EndMinutesWithLunch(540, 480, 0, true) == 1020);
+    CHECK(offwork::EndMinutesWithLunch(1320, 480, 60, true) == 420);
+    const auto night = CalculateWorkday(0, 1320, 360, 700, 60, true);
+    CHECK(night.remainingSeconds == 360 * 60);
+    CHECK(Near(night.earned, 100));
+    CHECK(Near(CalculateWorkday(23 * 3600, 1320, 360, 700, 60, true).earned, 0));
+    CHECK(offwork::EffectiveWorkMinutes(540, 780, 60, true) == 180);
+    for (const int lunchDuration : {60, 90, -1, 1440}) {
+        bool noWork = false;
+        try { (void)CalculateWorkday(12*3600, 720, 780, 500, lunchDuration, true); }
+        catch (const std::invalid_argument&) { noWork = true; }
+        CHECK(noWork);
+    }
+    bool tooLong = false;
+    try { (void)offwork::EndMinutesWithLunch(540, 1380, 60, true); }
+    catch (const std::invalid_argument&) { tooLong = true; }
+    CHECK(tooLong);
+    CHECK(offwork::EndMinutesWithLunch(540, 1380, 59, true) == 539);
     std::cout << "All OffWork calculation tests passed.\n";
     return 0;
 }

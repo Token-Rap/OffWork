@@ -87,10 +87,8 @@ inline constexpr LogicalRect kEndModeLabel{37, 372, 112, 393};
 inline constexpr LogicalRect kEndTimeModeButton{112, 370, 212, 395};
 inline constexpr LogicalRect kDurationModeButton{216, 370, 323, 395};
 inline constexpr LogicalRect kEndBox{37, 397, 323, 429};
-inline constexpr LogicalRect kLunchStartLabel{37, 433, 175, 453};
-inline constexpr LogicalRect kLunchEndLabel{191, 433, 323, 453};
-inline constexpr LogicalRect kLunchStartBox{37, 454, 175, 486};
-inline constexpr LogicalRect kLunchEndBox{191, 454, 323, 486};
+inline constexpr LogicalRect kLunchDurationLabel{37, 433, 323, 453};
+inline constexpr LogicalRect kLunchDurationBox{37, 454, 323, 486};
 inline constexpr LogicalRect kDeductLunchLabel{37, 492, 275, 514};
 inline constexpr LogicalRect kDeductLunchToggle{279, 492, 323, 514};
 inline constexpr LogicalRect kDeductLunchHit{37, 488, 323, 518};
@@ -116,8 +114,7 @@ enum class HotElement {
     StartField,
     EndField,
     SalaryField,
-    LunchStartField,
-    LunchEndField,
+    LunchDurationField,
     DeductLunch,
     EndTimeMode,
     DurationMode,
