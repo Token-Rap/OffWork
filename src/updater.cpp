@@ -8,9 +8,36 @@
 #include <chrono>
 #include <filesystem>
 #include <functional>
+#include <mutex>
 #include <thread>
 
 namespace offwork {
+
+// The worker owns this mailbox independently of Updater/AppState. The same
+// short lock gates PostMessage and HWND invalidation; no I/O runs under it.
+struct UpdateTask {
+    std::mutex mutex;
+    std::atomic_bool cancelled = false;
+    HWND window = nullptr;
+    WPARAM operation = 0;
+    std::optional<UpdateResult> result;
+
+    void Progress(int percent) {
+        std::lock_guard lock(mutex);
+        if (window && !cancelled) {
+            PostMessageW(window, kUpdateProgressMessage, operation, percent);
+        }
+    }
+
+    void Complete(UpdateResult completed) {
+        std::lock_guard lock(mutex);
+        if (window && !cancelled) {
+            result = std::move(completed);
+            PostMessageW(window, kUpdateCompleteMessage, operation, 0);
+        }
+    }
+};
+
 namespace {
 constexpr ULONGLONG kCheckInterval = 6ull * 60 * 60 * 1000;
 constexpr std::size_t kMaxInstallerBytes = 64 * 1024 * 1024;
@@ -20,12 +47,12 @@ using Internet = std::unique_ptr<void, InternetCloser>;
 struct FileCloser { void operator()(void* p) const { if (p != INVALID_HANDLE_VALUE) CloseHandle(p); } };
 using File = std::unique_ptr<void, FileCloser>;
 
-void CleanupStaleDownloads() {
+void CleanupStaleDownloads(const std::atomic_bool& cancelled) {
     std::error_code error;
     const auto root = std::filesystem::temp_directory_path(error);
     if (error) return;
     std::filesystem::directory_iterator it(root, error), end;
-    for (int examined = 0; !error && it != end && examined < 4096; it.increment(error), ++examined) {
+    for (int examined = 0; !cancelled && !error && it != end && examined < 4096; it.increment(error), ++examined) {
         const auto path = it->path();
         const auto name = path.filename().wstring();
         constexpr std::wstring_view prefix = L"OffWork-update-";
@@ -46,9 +73,11 @@ void CleanupStaleDownloads() {
 }
 
 // Synchronous WinHTTP runs exclusively on a worker. All handles are scoped to
-// it; neither HWNDs nor AppState references cross the thread boundary.
+// it; no AppState/Updater references cross the thread boundary.
 bool Fetch(const std::wstring& url, std::size_t limit, const std::atomic_bool& cancelled,
-           const std::function<bool(const char*, DWORD)>& consume) {
+           const std::function<bool(const char*, DWORD)>& consume,
+           const UpdateProgress& progress = {}) {
+    if (cancelled) return false;
     URL_COMPONENTS parts = {};
     parts.dwStructSize = sizeof(parts);
     parts.dwHostNameLength = parts.dwUrlPathLength = parts.dwExtraInfoLength = static_cast<DWORD>(-1);
@@ -68,7 +97,8 @@ bool Fetch(const std::wstring& url, std::size_t limit, const std::atomic_bool& c
     if (!WinHttpSetOption(request.get(), WINHTTP_OPTION_REDIRECT_POLICY, &redirectPolicy, sizeof(redirectPolicy))) return false;
     if (cancelled || !WinHttpSendRequest(request.get(),
         L"Accept: application/vnd.github+json\r\n", static_cast<DWORD>(-1),
-        WINHTTP_NO_REQUEST_DATA, 0, 0, 0) || !WinHttpReceiveResponse(request.get(), nullptr)) return false;
+        WINHTTP_NO_REQUEST_DATA, 0, 0, 0) || cancelled ||
+        !WinHttpReceiveResponse(request.get(), nullptr) || cancelled) return false;
     DWORD status = 0, size = sizeof(status);
     if (!WinHttpQueryHeaders(request.get(), WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
         WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX) || status != 200) return false;
@@ -77,21 +107,39 @@ bool Fetch(const std::wstring& url, std::size_t limit, const std::atomic_bool& c
     const bool hasLength = WinHttpQueryHeaders(request.get(), WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
         WINHTTP_HEADER_NAME_BY_INDEX, &expected, &size, WINHTTP_NO_HEADER_INDEX) != FALSE;
     if (hasLength && expected > limit) return false;
+    const auto contentLength = hasLength ? std::optional<std::size_t>(expected) : std::nullopt;
+    int lastPercent = -2;
+    ULONGLONG lastProgress = 0;
+    const auto report = [&](std::size_t total) {
+        if (!progress || cancelled) return;
+        const int percent = InstallerDownloadPercent(total, contentLength);
+        const auto now = GetTickCount64();
+        // At most ten notifications/second, plus the initial notification.
+        // Unknown lengths keep an indeterminate arc moving as bytes arrive.
+        if (lastPercent != -2 && now - lastProgress < 100) return;
+        if (percent == lastPercent && percent != -1) return;
+        progress(percent);
+        lastPercent = percent;
+        lastProgress = now;
+    };
+    report(0);
     std::size_t total = 0;
     const auto deadline = GetTickCount64() + 5 * 60 * 1000;
     std::array<char, 32768> buffer;
     while (!cancelled && GetTickCount64() < deadline) {
         DWORD count = 0;
         if (!WinHttpReadData(request.get(), buffer.data(), static_cast<DWORD>(buffer.size()), &count)) return false;
+        if (cancelled) return false;
         if (!count) return total > 0 && (!hasLength || total == expected);
         total += count;
         if (total > limit || !consume(buffer.data(), count)) return false;
+        report(total);
     }
     return false;
 }
 
 std::optional<ReleaseInfo> CheckRelease(const std::atomic_bool& cancelled) {
-    CleanupStaleDownloads();
+    CleanupStaleDownloads(cancelled);
     std::string json;
     if (!Fetch(L"https://api.github.com/repos/alertform/OffWork/releases/latest", 2 * 1024 * 1024,
         cancelled, [&](const char* bytes, DWORD count) { json.append(bytes, count); return true; })) return {};
@@ -99,7 +147,9 @@ std::optional<ReleaseInfo> CheckRelease(const std::atomic_bool& cancelled) {
     return info && IsNewerVersion(info->tag, OFFWORK_VERSION) ? info : std::nullopt;
 }
 
-std::unique_ptr<DownloadedInstaller> DownloadRelease(const ReleaseInfo& info, const std::atomic_bool& cancelled) {
+std::unique_ptr<DownloadedInstaller> DownloadRelease(const ReleaseInfo& info,
+    const std::atomic_bool& cancelled, const UpdateProgress& progress) {
+    if (cancelled) return {};
     GUID id;
     wchar_t guid[40] = {};
     if (FAILED(CoCreateGuid(&id)) || !StringFromGUID2(id, guid, 40)) return {};
@@ -122,8 +172,10 @@ std::unique_ptr<DownloadedInstaller> DownloadRelease(const ReleaseInfo& info, co
         if (!WriteFile(file.get(), bytes, count, &written, nullptr) || written != count) return false;
         writtenTotal += count;
         return true;
-    });
-    if (!ok || signature[0] != 'M' || signature[1] != 'Z' || !FlushFileBuffers(file.get())) return {};
+    }, progress);
+    if (!ok || cancelled || signature[0] != 'M' || signature[1] != 'Z' ||
+        !FlushFileBuffers(file.get()) || cancelled) return {};
+    progress(100);
     return result;
 }
 
@@ -148,45 +200,97 @@ DownloadedInstaller::~DownloadedInstaller() {
     }
 }
 
-Updater::~Updater() { *cancelled_ = true; }
+Updater::Updater(UpdateWork work) : work_(std::move(work)) {
+    if (!work_) {
+        work_ = [](const auto& release, const auto& cancelled, const auto& progress) {
+            UpdateResult result;
+            if (release) result.installer = DownloadRelease(*release, cancelled, progress);
+            else result.release = CheckRelease(cancelled);
+            return result;
+        };
+    }
+}
+
+Updater::~Updater() { Stop(); }
+
+void Updater::Stop() {
+    stopped_ = true;
+    window_ = nullptr;
+    if (task_) {
+        // WM_DESTROY calls this before the HWND can be destroyed or reused.
+        std::lock_guard lock(task_->mutex);
+        task_->cancelled = true;
+        task_->window = nullptr;
+    }
+    task_.reset();
+    installer_.reset();
+    downloading_ = false;
+}
 
 void Updater::Start(bool download) {
-    if (task_.valid()) return;
+    if (stopped_ || !window_ || task_ || installer_) return;
     try {
-        // A packaged-task future never waits for its detached worker on close.
-        // The worker owns its cancellation flag and result, including cleanup.
-        std::packaged_task<UpdateResult()> work([cancel = cancelled_, release = release_, download] {
+        auto task = std::make_shared<UpdateTask>();
+        task->window = window_;
+        task->operation = ++operation_;
+        // Detached deliberately: the worker owns ALL its inputs, handles,
+        // mailbox, cancellation and cleanup. Destruction never joins network
+        // I/O, and Stop prevents any later posts to the HWND.
+        std::thread worker([task, work = work_, release = download ? release_ : std::nullopt] {
             UpdateResult result;
             try {
-                if (download && release) result.installer = DownloadRelease(*release, *cancel);
-                else result.release = CheckRelease(*cancel);
+                if (!task->cancelled) {
+                    result = work(release, task->cancelled,
+                        [task](int percent) { task->Progress(percent); });
+                }
             } catch (...) { /* Network, file and allocation failures stay silent. */ }
-            return result;
+            task->Complete(std::move(result));
         });
-        auto future = work.get_future();
-        std::thread worker(std::move(work));
         worker.detach();
-        task_ = std::move(future);
+        task_ = std::move(task);
         downloading_ = download;
+        percent_ = -1;
+        progressPhase_ = 0;
     } catch (...) { downloading_ = false; }
 }
 
-void Updater::Check() {
-    if (GetTickCount64() < nextCheck_ || task_.valid()) return;
+void Updater::Check(HWND window) {
+    if (stopped_ || !window || GetTickCount64() < nextCheck_ || task_ || installer_) return;
+    window_ = window;
     nextCheck_ = GetTickCount64() + kCheckInterval;
     Start(false);
 }
 
-void Updater::Download() { if (release_ && !task_.valid()) Start(true); }
+void Updater::Download() { if (release_) Start(true); }
 
-bool Updater::Poll() {
-    if (!task_.valid() || task_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return false;
+void Updater::Complete(WPARAM operation) {
+    if (!task_ || operation != operation_) return;
+    std::optional<UpdateResult> result;
+    {
+        std::lock_guard lock(task_->mutex);
+        result = std::move(task_->result);
+    }
+    if (!result) return;
+    task_.reset();
+    if (result->release) release_ = std::move(result->release);
+    installer_ = std::move(result->installer);
+    downloading_ = installer_ != nullptr;
+    percent_ = downloading_ ? 100 : -1;
+}
+
+void Updater::Progress(WPARAM operation, LPARAM percent) {
+    if (!task_ || !downloading_ || operation != operation_ || percent < -1 || percent > 100) return;
+    percent_ = static_cast<int>(percent);
+    ++progressPhase_;
+}
+
+bool Updater::LaunchReadyInstaller() {
+    if (!installer_) return false;
+    const bool launched = LaunchInstaller(*installer_);
+    installer_.reset();
     downloading_ = false;
-    try {
-        auto result = task_.get();
-        if (result.release) release_ = std::move(result.release);
-        return result.installer && LaunchInstaller(*result.installer);
-    } catch (...) { return false; }
+    percent_ = -1;
+    return launched;
 }
 
 }  // namespace offwork

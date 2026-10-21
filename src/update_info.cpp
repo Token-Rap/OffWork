@@ -222,4 +222,11 @@ std::optional<ReleaseInfo> ParseReleaseInfo(std::string_view json) {
     }
     return {};
 }
+int InstallerDownloadPercent(std::size_t received, std::optional<std::size_t> total) {
+    if (!total || !*total) return -1;
+    if (received >= *total) return 99;
+    // Floating point avoids overflowing received * 100 for large byte counts.
+    return std::min(99, static_cast<int>(100.0 *
+        (static_cast<double>(received) / static_cast<double>(*total))));
+}
 }  // namespace offwork

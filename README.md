@@ -78,7 +78,7 @@ HKCU\Software\Microsoft\Windows\CurrentVersion\Run  ->  值名 OffWork
 
 启动时及之后每六小时，后台通过 WinHTTP 访问 [GitHub 最新 Release API](https://api.github.com/repos/alertform/OffWork/releases/latest)，不使用令牌。只有发现比当前版本新的正式版本、且存在 `OffWork-Setup.exe` 安装包时，标题栏才显示小型下载图标和圆点。检查、下载或启动安装程序失败均静默处理；下载失败可再次点击图标重试。
 
-点击图标会把安装包下载到 `%TEMP%\OffWork-update-{GUID}\OffWork-Setup.exe`，下载期间图标变暗。下载完成后启动 `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART` 安装，应用退出以便替换文件，安装完成后自动重新启动。安装保留 `%LOCALAPPDATA%\OffWork\settings.ini` 及现有开机自启状态。免安装版使用同一更新入口，更新后运行安装版，沿用同一份本地设置。离线不影响倒计时和截图识别。
+点击图标会把安装包下载到 `%TEMP%\OffWork-update-{GUID}\OffWork-Setup.exe`，下载期间图标显示细进度环；服务器未提供文件大小时显示不定进度环。版本检查、下载和文件写入均在后台线程执行，完成与进度仅通过 `PostMessage` 的 `WM_APP` 消息通知界面。窗口销毁时先取消任务并同步关闭消息接收入口，不等待网络请求；后台线程独立持有数据并清理未完成文件。标题栏关闭仍按原有规则隐藏到托盘。下载完成后启动 `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART` 安装，应用退出以便替换文件，安装完成后自动重新启动。安装保留 `%LOCALAPPDATA%\OffWork\settings.ini` 及现有开机自启状态。免安装版使用同一更新入口，更新后运行安装版，沿用同一份本地设置。离线不影响倒计时和截图识别。
 
 如截图仍在识别，会先等识别结束再启动安装；下载失败会清理临时文件，成功使用的安装包超过一天后会在后续更新检查中清理。
 
@@ -164,7 +164,7 @@ CTest 包含计算器、文本编辑、配置兼容、开机自启、两种提�
 仅验证本次拖放、设置和更新变更时：
 
 ```powershell
-ctest --test-dir build/release-ninja -R '^(settings|image_file|drop_target|update|app_edit)$' --output-on-failure
+ctest --test-dir build/release-ninja -R '^(settings|image_file|drop_target|update|updater|app_edit)$' --output-on-failure
 ```
 
 构建安装包需要 [Inno Setup 6](https://jrsoftware.org/isdl.php)（`winget install JRSoftware.InnoSetup`）：

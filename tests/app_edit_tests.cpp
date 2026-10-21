@@ -39,6 +39,39 @@ void SmallControlsAndMaskRenderCorrectly() {
                 m.settings.hideEarned = true;
                 m.now.wHour = 10;
                 RenderFrame(a.dc(), m);
+                // Download activity has a ring on the indicator, not just a
+                // dimmed arrow. This point is on the ring above the arrow.
+                CHECK(GetPixel(a.dc(), ScaleValue(253, scale, dpi),
+                               ScaleValue(16, scale, dpi)) != kTitleBackground);
+                const auto checkRingChange = [&](int from, int to, unsigned phase) {
+                    m.updatePercent = from;
+                    m.updateProgressPhase = 0;
+                    RenderFrame(a.dc(), m);
+                    m.updatePercent = to;
+                    m.updateProgressPhase = phase;
+                    RenderFrame(b.dc(), m);
+                    GdiFlush();
+                    DIBSECTION first = {}, second = {};
+                    CHECK(GetObjectW(GetCurrentObject(a.dc(), OBJ_BITMAP), sizeof(first), &first));
+                    CHECK(GetObjectW(GetCurrentObject(b.dc(), OBJ_BITMAP), sizeof(second), &second));
+                    const auto* left = static_cast<const std::uint32_t*>(first.dsBm.bmBits);
+                    const auto* right = static_cast<const std::uint32_t*>(second.dsBm.bmBits);
+                    const RECT indicator = ScaleRect(kUpdateButton, scale, dpi);
+                    bool changed = false;
+                    for (int y = 0; y < size.cy; ++y) {
+                        for (int x = 0; x < size.cx; ++x) {
+                            const auto index = static_cast<std::size_t>(y) * size.cx + x;
+                            if (((left[index] ^ right[index]) & 0x00ffffff) == 0) continue;
+                            changed = true;
+                            CHECK(PtInRect(&indicator, POINT{x, y}));
+                        }
+                    }
+                    CHECK(changed);
+                };
+                checkRingChange(0, 75, 0);
+                checkRingChange(75, 100, 0);
+                checkRingChange(-1, -1, 6);
+                RenderFrame(a.dc(), m);
                 m.now.wHour = 16;
                 RenderFrame(b.dc(), m);
                 const RECT amount = ScaleRect(kEarnedAmount, scale, dpi);

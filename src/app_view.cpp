@@ -28,6 +28,8 @@ RenderModel BuildModel() {
     model.screenshotDragActive = g.screenshotDragActive;
     model.updateAvailable = g.updater.Available();
     model.updateDownloading = g.updater.Downloading();
+    model.updatePercent = g.updater.DownloadPercent();
+    model.updateProgressPhase = g.updater.ProgressPhase();
     model.editEndInputMode = g.editEndInputMode;
     model.hot = g.hot;
     model.icon = g.icon;

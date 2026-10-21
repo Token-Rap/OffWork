@@ -2,10 +2,23 @@
 #include "update_info.h"
 
 #include <iostream>
+#include <limits>
 #include <string>
 
 int main() {
     using namespace offwork;
+    CHECK(InstallerDownloadPercent(0, std::nullopt) == -1);
+    CHECK(InstallerDownloadPercent(500, std::nullopt) == -1);
+    CHECK(InstallerDownloadPercent(0, 0) == -1);
+    CHECK(InstallerDownloadPercent(0, 1000) == 0);
+    CHECK(InstallerDownloadPercent(1, 1000) == 0);
+    CHECK(InstallerDownloadPercent(500, 1000) == 50);
+    CHECK(InstallerDownloadPercent(999, 1000) == 99);
+    CHECK(InstallerDownloadPercent(1000, 1000) == 99);
+    CHECK(InstallerDownloadPercent(2000, 1000) == 99);
+    constexpr auto maxBytes = std::numeric_limits<std::size_t>::max();
+    CHECK(InstallerDownloadPercent((maxBytes - 1) / 2, maxBytes - 1) == 50);
+    CHECK(InstallerDownloadPercent(maxBytes, maxBytes) == 99);
     CHECK(IsNewerVersion("v0.4.0", "0.3.0"));
     CHECK(IsNewerVersion("v0.10.0", "0.9.99"));
     CHECK(IsNewerVersion("1.0.0", "0.99.99"));

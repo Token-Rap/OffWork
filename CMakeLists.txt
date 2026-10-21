@@ -80,6 +80,12 @@ add_test(NAME update COMMAND OffWorkUpdateTests)
 # -- application -------------------------------------------------------------
 
 if(WIN32)
+  add_executable(OffWorkUpdaterTests tests/updater_tests.cpp src/updater.cpp src/update_info.cpp)
+  offwork_target_defaults(OffWorkUpdaterTests)
+  target_link_libraries(OffWorkUpdaterTests PRIVATE ole32 user32 winhttp)
+  add_test(NAME updater COMMAND OffWorkUpdaterTests)
+  set_tests_properties(updater PROPERTIES TIMEOUT 15)
+
   add_executable(OffWorkDropTargetTests tests/drop_target_tests.cpp src/drop_target.cpp)
   offwork_target_defaults(OffWorkDropTargetTests)
   target_link_libraries(OffWorkDropTargetTests PRIVATE ole32 shell32 user32)

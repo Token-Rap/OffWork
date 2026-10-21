@@ -210,6 +210,37 @@ void DrawUpdate(HDC dc, const RenderModel& model) {
     if (model.hot == HotElement::Update) {
         FillRounded(dc, ToRect(kUpdateButton, scale, dpi), ScaleValue(5, scale, dpi), kButtonHover);
     }
+    if (model.updateDownloading) {
+        // A quiet 22px ring replaces the arrow while bytes are arriving. It
+        // stays inside the existing indicator, with no status text or banner.
+        constexpr double pi = 3.14159265358979323846;
+        const double start = model.updatePercent < 0 ?
+            static_cast<double>(model.updateProgressPhase % 24) * pi / 12 : 0;
+        const double sweep = model.updatePercent < 0 ? pi / 2 :
+            2 * pi * std::clamp(model.updatePercent, 0, 100) / 100;
+        const int cx = ScaleValue(253, scale, dpi);
+        const int cy = ScaleValue(27, scale, dpi);
+        const int radius = ScaleValue(11, scale, dpi);
+        HPEN track = CreatePen(PS_SOLID, std::max(1, ScaleValue(1, scale, dpi)), kTextMuted);
+        HPEN active = CreatePen(PS_SOLID, std::max(1, ScaleValue(1, scale, dpi)), kAccent);
+        const auto oldPen = SelectObject(dc, track);
+        const auto oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+        Ellipse(dc, cx - radius, cy - radius, cx + radius + 1, cy + radius + 1);
+        SelectObject(dc, active);
+        // A polyline avoids GDI Arc's full-circle special case at 0%.
+        for (int step = 0; step <= 64 && sweep > 0; ++step) {
+            const double angle = start + sweep * step / 64 - pi / 2;
+            const int x = cx + static_cast<int>(std::lround(radius * std::cos(angle)));
+            const int y = cy + static_cast<int>(std::lround(radius * std::sin(angle)));
+            if (!step) MoveToEx(dc, x, y, nullptr);
+            else LineTo(dc, x, y);
+        }
+        SelectObject(dc, oldBrush);
+        SelectObject(dc, oldPen);
+        DeleteObject(active);
+        DeleteObject(track);
+        return;
+    }
     DrawScaledLine(dc, 253, 20, 253, 32, color, 1, scale, dpi);
     DrawScaledLine(dc, 248, 27, 253, 32, color, 1, scale, dpi);
     DrawScaledLine(dc, 253, 32, 258, 27, color, 1, scale, dpi);

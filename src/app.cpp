@@ -167,7 +167,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             const HRESULT registered = RegisterDragDrop(window, target);
             target->Release(); // RegisterDragDrop holds the window's reference.
             if (FAILED(registered)) return -1;
-            g.updater.Check();
+            g.updater.Check(window);
             return 0;
         }
 
@@ -176,14 +176,15 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 // The reminder is decided on every tick, hidden or not; only
                 // painting depends on visibility.
                 TickShiftReminder();
+                const bool ocrWasRunning = g.ocrTask.valid();
                 PollScreenshotOcr();
                 // A std::async OCR future waits at process teardown. Keep the
                 // window alive until it is consumed so setup can replace us.
-                if (!g.ocrTask.valid() && g.updater.Poll()) {
+                if (ocrWasRunning && !g.ocrTask.valid() && g.updater.LaunchReadyInstaller()) {
                     DestroyWindow(window);
                     return 0;
                 }
-                g.updater.Check();
+                g.updater.Check(window);
                 g.trayIcon.TickBalloon();
                 if (IsWindowVisible(window)) {
                     Present();
@@ -192,6 +193,20 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 g.caretVisible = !g.caretVisible;
                 Present();
             }
+            return 0;
+
+        case kUpdateProgressMessage:
+            g.updater.Progress(wParam, lParam);
+            Present();
+            return 0;
+
+        case kUpdateCompleteMessage:
+            g.updater.Complete(wParam);
+            if (!g.ocrTask.valid() && g.updater.LaunchReadyInstaller()) {
+                DestroyWindow(window);
+                return 0;
+            }
+            Present();
             return 0;
 
         case WM_PAINT: {
@@ -553,6 +568,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             return 0;
 
         case WM_DESTROY:
+            g.updater.Stop();
             RevokeDragDrop(window);
             g.screenshotDragActive = false;
             KillTimer(window, kClockTimer);
@@ -564,6 +580,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 g.icon = nullptr;
             }
             PostQuitMessage(0);
+            g.window = nullptr;
             return 0;
 
         default:

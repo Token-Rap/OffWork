@@ -37,6 +37,8 @@ struct RenderModel {
     bool screenshotDragActive = false;
     bool updateAvailable = false;
     bool updateDownloading = false;
+    int updatePercent = -1;
+    unsigned updateProgressPhase = 0;
     EndInputMode editEndInputMode = EndInputMode::EndTime;
     HotElement hot = HotElement::None;
     HICON icon = nullptr;
