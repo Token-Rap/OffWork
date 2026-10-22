@@ -25,18 +25,21 @@ struct DownloadedInstaller {
 struct UpdateResult {
     std::optional<ReleaseInfo> release;
     std::unique_ptr<DownloadedInstaller> installer;
+    // A valid check succeeds even when the current version is already latest.
+    bool checkSucceeded = false;
 };
 
 using UpdateProgress = std::function<void(int)>;
 // A missing release requests a check; a supplied release requests a download.
 using UpdateWork = std::function<UpdateResult(const std::optional<ReleaseInfo>&,
     const std::atomic_bool&, const UpdateProgress&)>;
+using UpdateClock = std::function<ULONGLONG()>;
 
 struct UpdateTask;
 
 class Updater {
 public:
-    explicit Updater(UpdateWork work = {});
+    explicit Updater(UpdateWork work = {}, UpdateClock clock = GetTickCount64);
     ~Updater();
     Updater(const Updater&) = delete;
     Updater& operator=(const Updater&) = delete;
@@ -59,12 +62,13 @@ public:
 private:
     void Start(bool download);
     UpdateWork work_;
+    UpdateClock clock_;
     std::shared_ptr<UpdateTask> task_;
     std::optional<ReleaseInfo> release_;
     std::unique_ptr<DownloadedInstaller> installer_;
     HWND window_ = nullptr;
     WPARAM operation_ = 0;
-    ULONGLONG nextCheck_ = 0;
+    UpdateCheckSchedule checkSchedule_;
     int percent_ = -1;
     unsigned progressPhase_ = 0;
     bool downloading_ = false;

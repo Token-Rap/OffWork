@@ -5,8 +5,71 @@
 #include <limits>
 #include <string>
 
+namespace {
+void ReleaseLocations() {
+    using namespace offwork;
+    for (const auto location : {
+            "https://github.com/alertform/OffWork/releases/tag/v0.4.1",
+            "/alertform/OffWork/releases/tag/v0.4.1"}) {
+        const auto release = ParseReleaseLocation(location);
+        CHECK(release && release->tag == "v0.4.1");
+        CHECK(release->installerUrl ==
+            "https://github.com/alertform/OffWork/releases/download/v0.4.1/OffWork-Setup.exe");
+    }
+    CHECK(ParseReleaseLocation("/alertform/OffWork/releases/tag/v10.20.30").has_value());
+    for (const auto location : {"", "http://github.com/alertform/OffWork/releases/tag/v0.4.1",
+            "https://github.com.evil.test/alertform/OffWork/releases/tag/v0.4.1",
+            "https://evil.test/alertform/OffWork/releases/tag/v0.4.1",
+            "https://github.com@evil.test/alertform/OffWork/releases/tag/v0.4.1",
+            "//github.com/alertform/OffWork/releases/tag/v0.4.1",
+            "/other/OffWork/releases/tag/v0.4.1", "/alertform/Other/releases/tag/v0.4.1",
+            "/alertform/OffWork/releases/download/v0.4.1"}) {
+        CHECK(!ParseReleaseLocation(location));
+    }
+    for (const auto tag : {"", "0.4.1", "V0.4.1", "v0.4", "v0.4.1.2", "v00.4.1",
+            "v0.04.1", "v0.4.01", "v0.4.-1", "v0.4.1-rc.1", "v0.4.1+build.1",
+            "v0.4.1/", "v0.4.1?x=1", "v0.4.1#fragment", "v0.4.1%2f..", "../v0.4.1",
+            " v0.4.1", "v0.4.1 ", "v0.4.1\r\n", "v0.4.1\\evil"}) {
+        CHECK(!ParseReleaseLocation(std::string("/alertform/OffWork/releases/tag/") + tag));
+    }
+    auto embeddedNull = std::string("/alertform/OffWork/releases/tag/v0.4.1");
+    embeddedNull.push_back('\0');
+    embeddedNull += "evil";
+    CHECK(!ParseReleaseLocation(embeddedNull));
+}
+
+void FailedChecksBackOffAndSuccessResets() {
+    using namespace offwork;
+    constexpr std::uint64_t minute = 60000;
+    UpdateCheckSchedule schedule;
+    std::uint64_t now = 12345;
+    CHECK(schedule.Due(now));
+    for (const unsigned minutes : {10, 20, 40, 80, 160, 320, 320, 320}) {
+        schedule.Complete(now, false);
+        CHECK(!schedule.Due(now));
+        CHECK(!schedule.Due(now + minutes * minute - 1));
+        CHECK(schedule.Due(now + minutes * minute));
+        now += minutes * minute;
+    }
+    // A long outage must stay capped without overflowing the failure counter.
+    for (int i = 0; i < 1000; ++i) schedule.Complete(now, false);
+    CHECK(!schedule.Due(now + 320 * minute - 1));
+    CHECK(schedule.Due(now + 320 * minute));
+    // Success includes a valid check reporting no newer release.
+    schedule.Complete(now, true);
+    CHECK(!schedule.Due(now + 360 * minute - 1));
+    CHECK(schedule.Due(now + 360 * minute));
+    now += 360 * minute;
+    schedule.Complete(now, false);
+    CHECK(!schedule.Due(now + 10 * minute - 1));
+    CHECK(schedule.Due(now + 10 * minute));
+}
+} // namespace
+
 int main() {
     using namespace offwork;
+    ReleaseLocations();
+    FailedChecksBackOffAndSuccessResets();
     CHECK(InstallerDownloadPercent(0, std::nullopt) == -1);
     CHECK(InstallerDownloadPercent(500, std::nullopt) == -1);
     CHECK(InstallerDownloadPercent(0, 0) == -1);
@@ -58,5 +121,5 @@ int main() {
     }
     CHECK(!ParseReleaseInfo(R"({"tag_name":"v0.4.0","tag_name":"v9.0.0","assets":[]})"));
     CHECK(!ParseReleaseInfo(std::string(80, '[') + std::string(80, ']')));
-    std::cout << "Semver and release JSON tests passed.\n";
+    std::cout << "Semver, release JSON/Location and check backoff tests passed.\n";
 }

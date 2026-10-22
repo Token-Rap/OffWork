@@ -45,6 +45,7 @@ void WorkersNotifyOnlyThroughMessages() {
             checkEntered.set_value();
             checkGate.wait();
             result.release = ReleaseInfo{"v9.0.0", "unused"};
+            result.checkSucceeded = true;
         } else {
             CHECK(release->tag == "v9.0.0");
             downloadEntered.set_value();
@@ -113,6 +114,7 @@ void ClosingCancelsWithoutWaitingOrPosting(bool download, bool destroyWindow) {
             UpdateResult result;
             if (download && !release) {
                 result.release = ReleaseInfo{"v9.0.0", "unused"};
+                result.checkSucceeded = true;
                 return result;
             }
             entered.set_value();
@@ -161,6 +163,51 @@ void ExceptionsStillNotifyCompletion() {
     CHECK(!updater.Available() && !updater.Downloading());
 }
 
+void FailedChecksRetryAndValidChecksRestoreNormalInterval() {
+    Window window;
+    constexpr ULONGLONG minute = 60000;
+    ULONGLONG now = 1000;
+    std::atomic_int calls = 0;
+    Updater updater([&](const auto&, const auto&, const auto&) {
+        UpdateResult result;
+        const int call = ++calls;
+        if (call == 1) throw std::runtime_error("network failure");
+        // The third check succeeds without finding a newer version.
+        result.checkSucceeded = call == 3;
+        return result;
+    }, [&] { return now; });
+    const auto completeCheck = [&](int expectedCalls) {
+        updater.Check(window.handle);
+        const auto message = WaitFor(window.handle, kUpdateCompleteMessage);
+        updater.Complete(message.wParam + 1); // Stale messages cannot change timing.
+        updater.Check(window.handle);
+        CHECK(calls == expectedCalls);
+        updater.Complete(message.wParam);
+    };
+    completeCheck(1);
+    now += 10 * minute - 1;
+    updater.Check(window.handle);
+    CHECK(calls == 1);
+    ++now;
+    completeCheck(2);
+    now += 20 * minute - 1;
+    updater.Check(window.handle);
+    CHECK(calls == 2);
+    ++now;
+    completeCheck(3);
+    CHECK(!updater.Available());
+    now += 360 * minute - 1;
+    updater.Check(window.handle);
+    CHECK(calls == 3);
+    ++now;
+    completeCheck(4);
+    now += 10 * minute - 1;
+    updater.Check(window.handle);
+    CHECK(calls == 4);
+    ++now;
+    completeCheck(5);
+}
+
 void CompletedInstallerIsCleanedOnClose() {
     Window window;
     const auto directory = std::filesystem::temp_directory_path() /
@@ -170,8 +217,10 @@ void CompletedInstallerIsCleanedOnClose() {
     Updater updater([&](const auto& release, const auto&, const auto&) {
         ++calls;
         UpdateResult result;
-        if (!release) result.release = ReleaseInfo{"v9.0.0", "unused"};
-        else {
+        if (!release) {
+            result.release = ReleaseInfo{"v9.0.0", "unused"};
+            result.checkSucceeded = true;
+        } else {
             CHECK(std::filesystem::create_directory(directory));
             std::ofstream file(path, std::ios::binary);
             file << "test data only - never executed";
@@ -203,6 +252,7 @@ int main() {
         }
     }
     ExceptionsStillNotifyCompletion();
+    FailedChecksRetryAndValidChecksRestoreNormalInterval();
     CompletedInstallerIsCleanedOnClose();
-    std::cout << "Updater worker, message, cancellation and lifetime tests passed.\n";
+    std::cout << "Updater worker, retry scheduling, message, cancellation and lifetime tests passed.\n";
 }

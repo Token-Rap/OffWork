@@ -222,6 +222,28 @@ std::optional<ReleaseInfo> ParseReleaseInfo(std::string_view json) {
     }
     return {};
 }
+std::optional<ReleaseInfo> ParseReleaseLocation(std::string_view location) {
+    constexpr std::string_view origin = "https://github.com";
+    constexpr std::string_view prefix = "/alertform/OffWork/releases/tag/";
+    if (location.starts_with(origin)) location.remove_prefix(origin.size());
+    if (!location.starts_with(prefix)) return {};
+    const auto tag = location.substr(prefix.size());
+    if (!tag.starts_with('v') || tag.find_first_not_of("v0123456789.") != tag.npos) return {};
+    const auto version = ParseVersion(tag);
+    if (!version) return {};
+    return ReleaseInfo{std::string(tag),
+        "https://github.com/alertform/OffWork/releases/download/" + std::string(tag) + "/OffWork-Setup.exe"};
+}
+
+void UpdateCheckSchedule::Complete(std::uint64_t now, bool succeeded) {
+    constexpr std::uint64_t minute = 60 * 1000;
+    // Saturate before shifting: 10, 20, 40, 80, 160, then 320 minutes.
+    // Even a prolonged outage retries sooner than the normal six hours.
+    failures_ = succeeded ? 0 : std::min(failures_ + 1, 6u);
+    const auto delay = succeeded ? 360 * minute : (10 * minute << (failures_ - 1));
+    nextCheck_ = now + delay;
+}
+
 int InstallerDownloadPercent(std::size_t received, std::optional<std::size_t> total) {
     if (!total || !*total) return -1;
     if (received >= *total) return 99;

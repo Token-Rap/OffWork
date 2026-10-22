@@ -4,6 +4,7 @@
 #include <winhttp.h>
 #include <objbase.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <filesystem>
@@ -39,7 +40,6 @@ struct UpdateTask {
 };
 
 namespace {
-constexpr ULONGLONG kCheckInterval = 6ull * 60 * 60 * 1000;
 constexpr std::size_t kMaxInstallerBytes = 64 * 1024 * 1024;
 
 struct InternetCloser { void operator()(void* p) const { if (p) WinHttpCloseHandle(p); } };
@@ -72,39 +72,85 @@ void CleanupStaleDownloads(const std::atomic_bool& cancelled) {
     }
 }
 
-// Synchronous WinHTTP runs exclusively on a worker. All handles are scoped to
-// it; no AppState/Updater references cross the thread boundary.
-bool Fetch(const std::wstring& url, std::size_t limit, const std::atomic_bool& cancelled,
-           const std::function<bool(const char*, DWORD)>& consume,
-           const UpdateProgress& progress = {}) {
-    if (cancelled) return false;
+struct HttpResponse {
+    Internet session;
+    Internet connection;
+    Internet request;
+    DWORD status = 0;
+};
+
+bool IsRedirect(DWORD status) {
+    return status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
+}
+
+std::optional<std::wstring> ReadLocation(HINTERNET request) {
+    std::array<wchar_t, 8192> buffer = {};
+    DWORD size = static_cast<DWORD>(sizeof(buffer));
+    if (!WinHttpQueryHeaders(request, WINHTTP_QUERY_LOCATION, WINHTTP_HEADER_NAME_BY_INDEX,
+        buffer.data(), &size, WINHTTP_NO_HEADER_INDEX) || !size || size % sizeof(wchar_t)) return {};
+    return std::wstring(buffer.data(), size / sizeof(wchar_t));
+}
+
+// Synchronous WinHTTP runs exclusively on a worker. Automatic redirects are
+// disabled so every destination is checked before making another request.
+std::optional<HttpResponse> OpenResponse(const std::wstring& url, const std::atomic_bool& cancelled) {
+    if (cancelled || url.find_first_of(L"\r\n\t#") != url.npos || url.find(L'\0') != url.npos) return {};
     URL_COMPONENTS parts = {};
     parts.dwStructSize = sizeof(parts);
     parts.dwHostNameLength = parts.dwUrlPathLength = parts.dwExtraInfoLength = static_cast<DWORD>(-1);
-    if (!WinHttpCrackUrl(url.c_str(), 0, 0, &parts) || parts.nScheme != INTERNET_SCHEME_HTTPS) return false;
+    parts.dwUserNameLength = parts.dwPasswordLength = static_cast<DWORD>(-1);
+    if (!WinHttpCrackUrl(url.c_str(), 0, 0, &parts) || parts.nScheme != INTERNET_SCHEME_HTTPS ||
+        parts.nPort != INTERNET_DEFAULT_HTTPS_PORT || parts.dwUserNameLength || parts.dwPasswordLength) return {};
     const std::wstring host(parts.lpszHostName, parts.dwHostNameLength);
+    if (host != L"github.com" && host != L"api.github.com" &&
+        host != L"objects.githubusercontent.com" && host != L"release-assets.githubusercontent.com") return {};
     std::wstring resource(parts.lpszUrlPath, parts.dwUrlPathLength);
     if (parts.dwExtraInfoLength) resource.append(parts.lpszExtraInfo, parts.dwExtraInfoLength);
-    Internet session(WinHttpOpen(L"OffWork/" OFFWORK_VERSION_W,
+    HttpResponse response;
+    response.session.reset(WinHttpOpen(L"OffWork/" OFFWORK_VERSION_W,
         WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
-    if (!session || !WinHttpSetTimeouts(session.get(), 5000, 5000, 10000, 15000)) return false;
-    Internet connection(WinHttpConnect(session.get(), host.c_str(), parts.nPort, 0));
-    if (!connection) return false;
-    Internet request(WinHttpOpenRequest(connection.get(), L"GET", resource.c_str(), nullptr,
+    if (!response.session || !WinHttpSetTimeouts(response.session.get(), 5000, 5000, 10000, 15000)) return {};
+    response.connection.reset(WinHttpConnect(response.session.get(), host.c_str(), parts.nPort, 0));
+    if (!response.connection) return {};
+    response.request.reset(WinHttpOpenRequest(response.connection.get(), L"GET", resource.c_str(), nullptr,
         WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE));
-    if (!request) return false;
-    DWORD redirectPolicy = WINHTTP_OPTION_REDIRECT_POLICY_DISALLOW_HTTPS_TO_HTTP;
-    if (!WinHttpSetOption(request.get(), WINHTTP_OPTION_REDIRECT_POLICY, &redirectPolicy, sizeof(redirectPolicy))) return false;
-    if (cancelled || !WinHttpSendRequest(request.get(),
-        L"Accept: application/vnd.github+json\r\n", static_cast<DWORD>(-1),
+    if (!response.request) return {};
+    const auto request = response.request.get();
+    DWORD redirectPolicy = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
+    if (!WinHttpSetOption(request, WINHTTP_OPTION_REDIRECT_POLICY, &redirectPolicy, sizeof(redirectPolicy))) return {};
+    const auto accept = host == L"api.github.com" ? L"Accept: application/vnd.github+json\r\n" : L"Accept: */*\r\n";
+    if (cancelled || !WinHttpSendRequest(request, accept, static_cast<DWORD>(-1),
         WINHTTP_NO_REQUEST_DATA, 0, 0, 0) || cancelled ||
-        !WinHttpReceiveResponse(request.get(), nullptr) || cancelled) return false;
-    DWORD status = 0, size = sizeof(status);
-    if (!WinHttpQueryHeaders(request.get(), WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-        WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX) || status != 200) return false;
+        !WinHttpReceiveResponse(request, nullptr) || cancelled) return {};
+    DWORD size = sizeof(response.status);
+    if (!WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+        WINHTTP_HEADER_NAME_BY_INDEX, &response.status, &size, WINHTTP_NO_HEADER_INDEX)) return {};
+    return response;
+}
+
+bool Fetch(const std::wstring& url, std::size_t limit, const std::atomic_bool& cancelled,
+           const std::function<bool(const char*, DWORD)>& consume,
+           const UpdateProgress& progress = {}) {
+    std::optional<HttpResponse> response;
+    auto currentUrl = url;
+    for (unsigned redirects = 0; ; ++redirects) {
+        response.reset();
+        response = OpenResponse(currentUrl, cancelled);
+        if (!response) return false;
+        if (response->status == 200) break;
+        if (!IsRedirect(response->status) || redirects == 5) return false;
+        const auto location = ReadLocation(response->request.get());
+        if (!location) return false;
+        if (location->starts_with(L"/") && !location->starts_with(L"//")) {
+            currentUrl = currentUrl.substr(0, currentUrl.find(L'/', 8)) + *location;
+        } else {
+            currentUrl = *location;
+        }
+    }
+    const auto request = response->request.get();
     DWORD expected = 0;
-    size = sizeof(expected);
-    const bool hasLength = WinHttpQueryHeaders(request.get(), WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
+    DWORD size = sizeof(expected);
+    const bool hasLength = WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
         WINHTTP_HEADER_NAME_BY_INDEX, &expected, &size, WINHTTP_NO_HEADER_INDEX) != FALSE;
     if (hasLength && expected > limit) return false;
     const auto contentLength = hasLength ? std::optional<std::size_t>(expected) : std::nullopt;
@@ -128,7 +174,7 @@ bool Fetch(const std::wstring& url, std::size_t limit, const std::atomic_bool& c
     std::array<char, 32768> buffer;
     while (!cancelled && GetTickCount64() < deadline) {
         DWORD count = 0;
-        if (!WinHttpReadData(request.get(), buffer.data(), static_cast<DWORD>(buffer.size()), &count)) return false;
+        if (!WinHttpReadData(request, buffer.data(), static_cast<DWORD>(buffer.size()), &count)) return false;
         if (cancelled) return false;
         if (!count) return total > 0 && (!hasLength || total == expected);
         total += count;
@@ -138,13 +184,36 @@ bool Fetch(const std::wstring& url, std::size_t limit, const std::atomic_bool& c
     return false;
 }
 
-std::optional<ReleaseInfo> CheckRelease(const std::atomic_bool& cancelled) {
+UpdateResult CheckRelease(const std::atomic_bool& cancelled) {
     CleanupStaleDownloads(cancelled);
-    std::string json;
-    if (!Fetch(L"https://api.github.com/repos/alertform/OffWork/releases/latest", 2 * 1024 * 1024,
-        cancelled, [&](const char* bytes, DWORD count) { json.append(bytes, count); return true; })) return {};
-    auto info = ParseReleaseInfo(json);
-    return info && IsNewerVersion(info->tag, OFFWORK_VERSION) ? info : std::nullopt;
+    std::optional<ReleaseInfo> info;
+    {
+        // Read only the redirect headers; never follow /latest to the HTML page.
+        const auto response = OpenResponse(L"https://github.com/alertform/OffWork/releases/latest", cancelled);
+        if (response && IsRedirect(response->status)) {
+            const auto location = ReadLocation(response->request.get());
+            if (location) {
+                // The parser accepts ASCII only, so reject rather than narrow Unicode.
+                if (std::all_of(location->begin(), location->end(), [](wchar_t c) { return c >= 32 && c < 127; })) {
+                    std::string ascii(location->size(), '\0');
+                    std::transform(location->begin(), location->end(), ascii.begin(),
+                        [](wchar_t c) { return static_cast<char>(c); });
+                    info = ParseReleaseLocation(ascii);
+                }
+            }
+        }
+    }
+    if (!info && !cancelled) {
+        std::string json;
+        if (Fetch(L"https://api.github.com/repos/alertform/OffWork/releases/latest", 2 * 1024 * 1024,
+            cancelled, [&](const char* bytes, DWORD count) { json.append(bytes, count); return true; })) {
+            info = ParseReleaseInfo(json);
+        }
+    }
+    UpdateResult result;
+    result.checkSucceeded = info.has_value();
+    if (info && IsNewerVersion(info->tag, OFFWORK_VERSION)) result.release = std::move(info);
+    return result;
 }
 
 std::unique_ptr<DownloadedInstaller> DownloadRelease(const ReleaseInfo& info,
@@ -200,12 +269,12 @@ DownloadedInstaller::~DownloadedInstaller() {
     }
 }
 
-Updater::Updater(UpdateWork work) : work_(std::move(work)) {
+Updater::Updater(UpdateWork work, UpdateClock clock) : work_(std::move(work)), clock_(std::move(clock)) {
     if (!work_) {
         work_ = [](const auto& release, const auto& cancelled, const auto& progress) {
             UpdateResult result;
             if (release) result.installer = DownloadRelease(*release, cancelled, progress);
-            else result.release = CheckRelease(cancelled);
+            else result = CheckRelease(cancelled);
             return result;
         };
     }
@@ -255,10 +324,10 @@ void Updater::Start(bool download) {
 }
 
 void Updater::Check(HWND window) {
-    if (stopped_ || !window || GetTickCount64() < nextCheck_ || task_ || installer_) return;
+    if (stopped_ || !window || !checkSchedule_.Due(clock_()) || task_ || installer_) return;
     window_ = window;
-    nextCheck_ = GetTickCount64() + kCheckInterval;
     Start(false);
+    if (!task_) checkSchedule_.Complete(clock_(), false);
 }
 
 void Updater::Download() { if (release_) Start(true); }
@@ -271,6 +340,7 @@ void Updater::Complete(WPARAM operation) {
         result = std::move(task_->result);
     }
     if (!result) return;
+    if (!downloading_) checkSchedule_.Complete(clock_(), result->checkSucceeded);
     task_.reset();
     if (result->release) release_ = std::move(result->release);
     installer_ = std::move(result->installer);
