@@ -194,23 +194,40 @@ void FiveMinuteStartupResetAndStaleAreSilent() {
 }
 
 void FiveMinuteReminderUsesActualEndWithLunchDuration() {
-    for (const int end : {18 * 60, 7 * 60}) {
-        const int start = end == 1080 ? 540 : 1320;
-        auto snapshot = CalculateWorkday(end * 60 - 361, start, end, 500, 60, true);
-        auto state = ResetReminder(snapshot.phase, snapshot.remainingSeconds);
-        snapshot = CalculateWorkday(end * 60 - 360, start, end, 500, 60, true);
-        auto d = TickReminder(state, snapshot.phase, kDay - 360, snapshot.remainingSeconds);
-        CHECK(!d.notifyFiveMinutes); // Do not fire an hour early.
-        snapshot = CalculateWorkday(end * 60 - 301, start, end, 500, 60, true);
-        d = TickReminder(d.next, snapshot.phase, kDay - 301, snapshot.remainingSeconds);
-        snapshot = CalculateWorkday(end * 60 - 300, start, end, 500, 60, true);
-        d = TickReminder(d.next, snapshot.phase, kDay - 300, snapshot.remainingSeconds);
-        CHECK(d.notifyFiveMinutes && snapshot.remainingSeconds == 300);
-        d = TickReminder(d.next, snapshot.phase, kDay - 299, 299);
-        CHECK(!d.notifyFiveMinutes);
-        snapshot = CalculateWorkday(end * 60, start, end, 500, 60, true);
-        d = TickReminder(d.next, snapshot.phase, 0, snapshot.remainingSeconds);
-        CHECK(d.notify && !d.notifyFiveMinutes);
+    for (const int start : {540, 1320}) {
+        const int end = offwork::EndMinutesWithLunch(start, 480, 60, true);
+        for (const int lunch : {0, 60, 90}) {
+            for (const bool deduct : {false, true}) {
+                // Start before the shortened display crosses five minutes and
+                // observe every second through zero display and the REAL end.
+                const int initialRemaining = lunch * 60 + 301;
+                const auto snapshotAt = [&](int remaining) {
+                    const int now = (end * 60 - remaining + kDay) % kDay;
+                    return CalculateWorkday(now, start, end, 800, lunch, deduct);
+                };
+                auto snapshot = snapshotAt(initialRemaining);
+                auto state = ResetReminder(snapshot.phase, snapshot.remainingSeconds);
+                int fiveMinuteNotifications = 0;
+                int endNotifications = 0;
+                for (int remaining = initialRemaining - 1; remaining >= -1; --remaining) {
+                    snapshot = snapshotAt(remaining);
+                    const int now = (end * 60 - remaining + kDay) % kDay;
+                    const auto d = TickReminder(state, snapshot.phase,
+                        SecondsSinceShiftEnd(now, end), snapshot.remainingSeconds);
+                    CHECK(d.notifyFiveMinutes == (remaining == 300));
+                    CHECK(d.notify == (remaining == 0));
+                    if (remaining == 300) {
+                        CHECK(snapshot.remainingSeconds == 300);
+                        CHECK(snapshot.countdownSeconds == (deduct && lunch > 0 ? 0 : 300));
+                    }
+                    fiveMinuteNotifications += d.notifyFiveMinutes ? 1 : 0;
+                    endNotifications += d.notify ? 1 : 0;
+                    state = d.next;
+                }
+                CHECK(fiveMinuteNotifications == 1);
+                CHECK(endNotifications == 1);
+            }
+        }
     }
     CHECK(offwork::EndMinutesWithLunch(540, 480, 60, true) == 1020);
     CHECK(offwork::EndMinutesWithLunch(1320, 480, 60, true) == 360);

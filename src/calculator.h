@@ -14,9 +14,11 @@ enum class WorkdayPhase {
 
 struct WorkdaySnapshot {
     WorkdayPhase phase;
+    // Real time to the phase boundary; reminders must use this value.
     int remainingSeconds;
     double earned;
     double progress;
+    int countdownSeconds = 0;
 };
 
 inline int WorkDurationMinutes(int startMinutes, int endMinutes) {
@@ -68,8 +70,8 @@ inline int EffectiveWorkMinutes(int start, int end, int lunchDuration, bool dedu
 }
 
 inline int EndMinutesWithLunch(int start, int duration, int lunchDuration, bool deduct) {
-    // Entered hours describe the full shift span. Lunch only reduces effective
-    // work for earnings; enabling deduction must not move the scheduled end.
+    // Entered hours describe the full paid shift span. Lunch only changes the
+    // displayed countdown; enabling deduction must not move the scheduled end.
     const int end = EndMinutesFromDuration(start, duration);
     (void)EffectiveWorkMinutes(start, end, lunchDuration, deduct);
     return end;
@@ -124,15 +126,19 @@ inline WorkdaySnapshot CalculateWorkday(
         remaining = duration - elapsed;
     }
 
-    const int effectiveDuration = EffectiveWorkMinutes(
-        startMinutes, endMinutes, lunchDuration, deductLunch) * 60;
-    // Without a break interval there is no timed pause. Keep the real countdown
-    // and credit effective work from the end backwards (see README).
-    elapsed = phase == WorkdayPhase::BeforeWork ? 0 : effectiveDuration - remaining;
+    // Preserve the existing lunch-duration validation; all scheduled time is paid.
+    (void)EffectiveWorkMinutes(startMinutes, endMinutes, lunchDuration, deductLunch);
     const double progress = std::clamp(
-        static_cast<double>(elapsed) / static_cast<double>(effectiveDuration), 0.0, 1.0);
+        static_cast<double>(elapsed) / static_cast<double>(duration), 0.0, 1.0);
     const double earned = dailySalary * progress;
-    return {phase, remaining, earned, progress};
+    // No lunch interval is tracked: subtract the full lunch throughout Working,
+    // including before/after noon and near shift end, clamping at zero. A zero
+    // display never ends the shift early or changes earnings/reminder timing.
+    // BeforeWork still counts down to clock-in without any lunch deduction.
+    const int countdown = phase == WorkdayPhase::Working
+        ? std::max(0, remaining - DeductedLunchMinutes(lunchDuration, deductLunch) * 60)
+        : remaining;
+    return {phase, remaining, earned, progress, countdown};
 }
 
 }  // namespace offwork

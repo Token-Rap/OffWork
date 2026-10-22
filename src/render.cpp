@@ -619,9 +619,9 @@ void RenderFrame(HDC dc, const RenderModel& model) {
         wchar_t duration[32] = {};
         swprintf_s(
             duration, L"%02d:%02d:%02d",
-            snapshot.remainingSeconds / 3600,
-            (snapshot.remainingSeconds % 3600) / 60,
-            snapshot.remainingSeconds % 60);
+            snapshot.countdownSeconds / 3600,
+            (snapshot.countdownSeconds % 3600) / 60,
+            snapshot.countdownSeconds % 60);
         countdown = duration;
     }
 

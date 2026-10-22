@@ -122,6 +122,34 @@ bool SamePixels(HDC first, HDC second, const RECT& rect) {
     return true;
 }
 
+void LunchOnlyChangesTheOffWorkCountdown() {
+    using namespace offwork;
+    RenderModel model;
+    model.settings.dailySalary = 900;
+    model.settings.lunchDurationMinutes = 60;
+    auto fonts = CreateFonts(100, 96);
+    model.fonts = &fonts;
+    const SIZE size = WindowSizeFor(100, 96, false);
+    LayeredSurface unchecked, checked;
+    CHECK(unchecked.EnsureSize(size.cx, size.cy));
+    CHECK(checked.EnsureSize(size.cx, size.cy));
+    for (const int hour : {8, 9, 12, 17, 18}) {
+        model.now.wHour = static_cast<WORD>(hour);
+        model.settings.deductLunch = false;
+        RenderFrame(unchecked.dc(), model);
+        model.settings.deductLunch = true;
+        RenderFrame(checked.dc(), model);
+        CHECK(SamePixels(unchecked.dc(), checked.dc(), ScaleRect(kEarnedAmount, 100, 96)));
+        CHECK(SamePixels(unchecked.dc(), checked.dc(), ScaleRect(kSalaryText, 100, 96)));
+        CHECK(SamePixels(unchecked.dc(), checked.dc(), ScaleRect(kProgressText, 100, 96)));
+        CHECK(SamePixels(unchecked.dc(), checked.dc(), ScaleRect(kProgressTrackRect, 100, 96)));
+        CHECK(SamePixels(unchecked.dc(), checked.dc(), ScaleRect(kStatusText, 100, 96)));
+        CHECK(SamePixels(unchecked.dc(), checked.dc(), ScaleRect(kCountdownText, 100, 96))
+              == (hour < 9 || hour >= 18));
+    }
+    DestroyFonts(fonts);
+}
+
 void AllMoneyOutsideEditorIsMasked() {
     using namespace offwork;
     for (const bool expanded : {false, true}) {
@@ -434,6 +462,7 @@ int main() {
     g.expanded = false;
     g.focusedField = -1;
     OcrSilentlyUpdatesAndSavesTime();
+    LunchOnlyChangesTheOffWorkCountdown();
     DropTargetRendersOnTheLayeredSurface();
     AllMoneyOutsideEditorIsMasked();
     SmallControlsAndMaskRenderCorrectly();

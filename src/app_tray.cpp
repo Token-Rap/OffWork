@@ -112,6 +112,7 @@ PhaseNow CurrentPhase() {
             nowSeconds, g.settings.startMinutes, g.settings.endMinutes,
             g.settings.dailySalary, g.settings.lunchDurationMinutes, g.settings.deductLunch);
         result.phase = snapshot.phase;
+        // Reminders follow the real end, even when the lunch countdown is zero.
         result.remainingSeconds = snapshot.remainingSeconds;
     } catch (...) {
         // NormalizeSettings makes this unreachable; never let a clock tick
