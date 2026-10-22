@@ -99,11 +99,21 @@ int main() {
     CHECK(Near(CalculateWorkday(18 * 3600, 540, 1080, 800, 60, true).earned, 800));
     CHECK(Near(CalculateWorkday(13 * 3600, 540, 1080, 900, 60, false).earned, 400));
     CHECK(Near(CalculateWorkday(13 * 3600, 540, 1080, 900, 0, true).earned, 400));
-    CHECK(offwork::EndMinutesWithLunch(540, 480, 60, true) == 1080);
-    CHECK(offwork::EndMinutesWithLunch(540, 120, 60, true) == 720);
+    // Lunch changes effective work, never the scheduled end or countdown.
+    const int deductedEnd = offwork::EndMinutesWithLunch(540, 480, 60, true);
+    CHECK(deductedEnd == 1020);
+    const auto deducted = CalculateWorkday(13 * 3600, 540, deductedEnd, 700, 60, true);
+    const auto continuous = CalculateWorkday(13 * 3600, 540, 1020, 700, 60, false);
+    CHECK(deducted.remainingSeconds == 4 * 3600);
+    CHECK(deducted.remainingSeconds == continuous.remainingSeconds);
+    CHECK(Near(deducted.progress, 3.0 / 7.0));
+    CHECK(Near(deducted.earned, 300));
+    CHECK(Near(continuous.earned, 350));
+    CHECK(Near(CalculateWorkday(17 * 3600, 540, deductedEnd, 700, 60, true).earned, 700));
+    CHECK(offwork::EndMinutesWithLunch(540, 120, 60, true) == 660);
     CHECK(offwork::EndMinutesWithLunch(540, 480, 60, false) == 1020);
     CHECK(offwork::EndMinutesWithLunch(540, 480, 0, true) == 1020);
-    CHECK(offwork::EndMinutesWithLunch(1320, 480, 60, true) == 420);
+    CHECK(offwork::EndMinutesWithLunch(1320, 480, 60, true) == 360);
     const auto night = CalculateWorkday(0, 1320, 360, 700, 60, true);
     CHECK(night.remainingSeconds == 360 * 60);
     CHECK(Near(night.earned, 100));
@@ -115,11 +125,14 @@ int main() {
         catch (const std::invalid_argument&) { noWork = true; }
         CHECK(noWork);
     }
-    bool tooLong = false;
-    try { (void)offwork::EndMinutesWithLunch(540, 1380, 60, true); }
-    catch (const std::invalid_argument&) { tooLong = true; }
-    CHECK(tooLong);
-    CHECK(offwork::EndMinutesWithLunch(540, 1380, 59, true) == 539);
+    for (const int lunchDuration : {480, 481, -1, 1440}) {
+        bool invalidLunch = false;
+        try { (void)offwork::EndMinutesWithLunch(540, 480, lunchDuration, true); }
+        catch (const std::invalid_argument&) { invalidLunch = true; }
+        CHECK(invalidLunch);
+    }
+    CHECK(offwork::EndMinutesWithLunch(540, 1380, 60, true) == 480);
+    CHECK(offwork::EndMinutesWithLunch(540, 1439, 60, true) == 539);
     std::cout << "All OffWork calculation tests passed.\n";
     return 0;
 }

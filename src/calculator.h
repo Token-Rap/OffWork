@@ -68,9 +68,11 @@ inline int EffectiveWorkMinutes(int start, int end, int lunchDuration, bool dedu
 }
 
 inline int EndMinutesWithLunch(int start, int duration, int lunchDuration, bool deduct) {
-    (void)EndMinutesFromDuration(start, duration); // validate inputs
-    // Clock-only schedules must remain shorter than a day, including lunch.
-    return EndMinutesFromDuration(start, duration + DeductedLunchMinutes(lunchDuration, deduct));
+    // Entered hours describe the full shift span. Lunch only reduces effective
+    // work for earnings; enabling deduction must not move the scheduled end.
+    const int end = EndMinutesFromDuration(start, duration);
+    (void)EffectiveWorkMinutes(start, end, lunchDuration, deduct);
+    return end;
 }
 
 inline WorkdaySnapshot CalculateWorkday(

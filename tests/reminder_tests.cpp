@@ -212,8 +212,8 @@ void FiveMinuteReminderUsesActualEndWithLunchDuration() {
         d = TickReminder(d.next, snapshot.phase, 0, snapshot.remainingSeconds);
         CHECK(d.notify && !d.notifyFiveMinutes);
     }
-    CHECK(offwork::EndMinutesWithLunch(540, 480, 60, true) == 1080);
-    CHECK(offwork::EndMinutesWithLunch(1320, 480, 60, true) == 420);
+    CHECK(offwork::EndMinutesWithLunch(540, 480, 60, true) == 1020);
+    CHECK(offwork::EndMinutesWithLunch(1320, 480, 60, true) == 360);
 }
 
 }  // namespace

@@ -233,7 +233,7 @@ void OcrSilentlyUpdatesAndSavesTime() {
     PopulateFields();
     CompleteOcr({{}, 535, {}});
     CHECK(g.settings.startMinutes == 535 && g.settings.endMinutes == 1075);
-    CHECK(g.fields[1].text == L"7.5");
+    CHECK(g.fields[1].text == L"9");
     CHECK(LoadSettings(g.settingsPath).endMinutes == 1075);
 
     g.footerText = L"unchanged";
@@ -275,12 +275,12 @@ int main() {
     CHECK(ReadFieldSettings(parsed));
     CHECK(parsed.lunchDurationMinutes == 60 && parsed.deductLunch);
     SetEndInputMode(EndInputMode::WorkDuration);
-    CHECK(g.fields[1].text == L"8"); // 09:00 to 18:00 minus 60 minutes.
+    CHECK(g.fields[1].text == L"9"); // Full 09:00 to 18:00 span, including lunch.
     g.fields[1] = MakeField(L"8.5");
     CHECK(ReadFieldSettings(parsed));
-    CHECK(parsed.endMinutes == 1110); // 18:30
+    CHECK(parsed.endMinutes == 1050); // 17:30, including lunch.
     SetEndInputMode(EndInputMode::EndTime);
-    CHECK(g.fields[1].text == L"18:30");
+    CHECK(g.fields[1].text == L"17:30");
     g.settings = parsed;
     PopulateFields();
     CHECK(g.fields[1].text == L"8.5" && g.fields[3].text == L"60");
@@ -288,6 +288,9 @@ int main() {
     ToggleDeductLunch();
     CHECK(ReadFieldSettings(parsed));
     CHECK(parsed.endMinutes == 1050); // 17:30 without lunch deduction.
+    ToggleDeductLunch();
+    CHECK(ReadFieldSettings(parsed));
+    CHECK(parsed.endMinutes == 1050); // Enabling deduction must not extend the shift.
     g.editDeductLunch = true;
     for (const auto text : {L"", L"0"}) {
         g.fields[3] = MakeField(text);
@@ -299,11 +302,11 @@ int main() {
         g.fields[3] = MakeField(text);
         CHECK(!ReadFieldSettings(parsed));
     }
-    g.fields[3] = MakeField(L"930");
-    CHECK(!ReadFieldSettings(parsed)); // 8.5h work + 15.5h lunch is not representable.
-    g.fields[3] = MakeField(L"929");
+    g.fields[3] = MakeField(L"510");
+    CHECK(!ReadFieldSettings(parsed)); // Lunch cannot consume the whole 8.5h span.
+    g.fields[3] = MakeField(L"509");
     CHECK(ReadFieldSettings(parsed));
-    CHECK(parsed.endMinutes == 539); // 23h59 shift.
+    CHECK(parsed.endMinutes == 1050); // Still 17:30, with one effective minute.
     g.editEndInputMode = EndInputMode::EndTime;
     g.fields[1] = MakeField(L"10:00");
     g.fields[3] = MakeField(L"60");
@@ -312,7 +315,7 @@ int main() {
     g.fields[1] = MakeField(L"8");
     g.editEndInputMode = EndInputMode::WorkDuration;
     CHECK(ReadFieldSettings(parsed));
-    CHECK(parsed.endMinutes == 420); // 07:00 next day.
+    CHECK(parsed.endMinutes == 360); // 06:00 next day, including lunch.
     g.expanded = true;
     g.focusedField = 3;
     FocusNextField(1);

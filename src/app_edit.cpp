@@ -85,9 +85,7 @@ void PopulateFields() {
     g.fields[1] = MakeField(
         g.editEndInputMode == EndInputMode::WorkDuration
             ? FormatDurationHours(
-                  EffectiveWorkMinutes(
-                      g.settings.startMinutes, g.settings.endMinutes,
-                      g.settings.lunchDurationMinutes, g.settings.deductLunch))
+                  WorkDurationMinutes(g.settings.startMinutes, g.settings.endMinutes))
             : FormatTimeValue(g.settings.endMinutes));
     g.fields[2] = MakeField(FormatSalaryValue(g.settings.dailySalary));
     g.fields[3] = MakeField(g.settings.lunchDurationMinutes == 0
@@ -253,8 +251,7 @@ void SetEndInputMode(EndInputMode mode) {
         return;
     }
     g.fields[1] = MakeField(mode == EndInputMode::WorkDuration
-        ? FormatDurationHours(EffectiveWorkMinutes(draft.startMinutes, draft.endMinutes,
-            draft.lunchDurationMinutes, draft.deductLunch))
+        ? FormatDurationHours(WorkDurationMinutes(draft.startMinutes, draft.endMinutes))
         : FormatTimeValue(draft.endMinutes));
     g.editEndInputMode = mode;
     if (g.focusedField == 1) g.fields[1] = SelectAll(g.fields[1]);
@@ -283,8 +280,7 @@ void PollScreenshotOcr() {
         Settings updated = g.settings;
         try {
             if (updated.endInputMode == EndInputMode::WorkDuration) {
-                const int duration = EffectiveWorkMinutes(updated.startMinutes, updated.endMinutes,
-                    updated.lunchDurationMinutes, updated.deductLunch);
+                const int duration = WorkDurationMinutes(updated.startMinutes, updated.endMinutes);
                 updated.endMinutes = EndMinutesWithLunch(*result.minutes, duration,
                     updated.lunchDurationMinutes, updated.deductLunch);
             }
