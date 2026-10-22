@@ -319,6 +319,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                     OpacityFromX(client.x, g.settings.uiScalePercent, g.dpi);
                 if (opacity != g.settings.opacityPercent) {
                     g.settings.opacityPercent = opacity;
+                    SaveSettings(g.settingsPath, g.settings);
                     Present();
                 }
                 return 0;
@@ -361,10 +362,12 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             const HotElement hot = HitTest(client, model);
 
             if (hot == HotElement::Opacity) {
+                SetFocusedField(-1);
                 g.adjustingOpacity = true;
                 SetCapture(window);
                 g.settings.opacityPercent =
                     OpacityFromX(client.x, g.settings.uiScalePercent, g.dpi);
+                SaveSettings(g.settingsPath, g.settings);
                 Present();
                 return 0;
             }
@@ -466,9 +469,6 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 case HotElement::DeductLunch:
                     ToggleDeductLunch();
                     break;
-                case HotElement::Save:
-                    ApplySave();
-                    break;
                 default:
                     break;
             }
@@ -503,7 +503,8 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 return 0;
             }
             if (wParam == VK_RETURN && g.expanded) {
-                ApplySave();
+                SetFocusedField(-1);
+                Present();
                 return 0;
             }
             if (HandleFieldKey(wParam)) {
@@ -529,6 +530,11 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             return 0;
         }
 
+        case WM_KILLFOCUS:
+            SetFocusedField(-1);
+            Present();
+            return 0;
+
         case WM_ACTIVATE:
             EnsureTopmost();
             return 0;
@@ -551,6 +557,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         }
 
         case WM_CLOSE:
+            SetFocusedField(-1);
             if (!HideWidgetToTray()) {
                 // Never leave an inaccessible hidden process behind if the
                 // notification icon could not be registered.
@@ -559,6 +566,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             return 0;
 
         case WM_QUERYENDSESSION:
+            SetFocusedField(-1);
             return TRUE;
 
         case WM_ENDSESSION:

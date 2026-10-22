@@ -23,7 +23,8 @@ bool ReadFieldSettings(Settings& settings);
 std::wstring ReadClipboardText(HWND owner);
 void WriteClipboardText(HWND owner, const std::wstring& text);
 
-void ApplySave();
+// Commit one field on blur; invalid input is restored from the saved settings.
+void ApplyFieldChange(int fieldIndex);
 void ToggleDeductLunch();
 void BeginScreenshotOcr(const std::wstring& path);
 void PollScreenshotOcr();

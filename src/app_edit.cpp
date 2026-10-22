@@ -93,16 +93,68 @@ void PopulateFields() {
 }
 
 bool ParseTimeText(const std::wstring& text, int& minutes) {
-    int hour = -1;
-    int minute = -1;
-    wchar_t trailing = L'\0';
-    if (swscanf_s(text.c_str(), L"%d:%d %c", &hour, &minute, &trailing, 1) != 2 ||
-        hour < 0 || hour > 23 || minute < 0 || minute > 59) {
-        return false;
+    const auto colon = text.find(L':');
+    if (colon == std::wstring::npos || colon < 1 || colon > 2 ||
+        text.size() <= colon + 1 || text.size() > colon + 3) return false;
+    int hour = 0;
+    int minute = 0;
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        if (i == colon) continue;
+        if (text[i] < L'0' || text[i] > L'9') return false;
+        int& value = i < colon ? hour : minute;
+        value = value * 10 + text[i] - L'0';
     }
+    if (hour > 23 || minute > 59) return false;
     minutes = hour * 60 + minute;
     return true;
 }
+
+namespace {
+
+bool ParseSalaryText(const std::wstring& text, double& salary) {
+    if (text.empty()) return false;
+    wchar_t* end = nullptr;
+    const double value = std::wcstod(text.c_str(), &end);
+    if (end == text.c_str() || *end != L'\0' || !std::isfinite(value) ||
+        value < 0.0 || value > 1000000.0) return false;
+    // Match the cents shown in the editor and written to settings.ini.
+    salary = std::round(value * 100.0) / 100.0;
+    return true;
+}
+
+bool ValidWorkSettings(const Settings& settings) {
+    try {
+        (void)EffectiveWorkMinutes(settings.startMinutes, settings.endMinutes,
+            settings.lunchDurationMinutes, settings.deductLunch);
+        return true;
+    } catch (const std::invalid_argument&) {
+        return false;
+    }
+}
+
+FieldState SettingsField(int index) {
+    switch (index) {
+        case 0: return MakeField(FormatTimeValue(g.settings.startMinutes));
+        case 1: return MakeField(g.settings.endInputMode == EndInputMode::WorkDuration
+            ? FormatDurationHours(WorkDurationMinutes(g.settings.startMinutes, g.settings.endMinutes))
+            : FormatTimeValue(g.settings.endMinutes));
+        case 2: return MakeField(FormatSalaryValue(g.settings.dailySalary));
+        default: return MakeField(g.settings.lunchDurationMinutes == 0
+            ? L"" : std::to_wstring(g.settings.lunchDurationMinutes));
+    }
+}
+
+void PersistLiveSettings(const Settings& settings) {
+    g.settings = settings;
+    g.editDeductLunch = settings.deductLunch;
+    g.editEndInputMode = settings.endInputMode;
+    SaveSettings(g.settingsPath, g.settings);
+    // An edit can put now past the end time; it must not fire a shift reminder.
+    ResetShiftReminder();
+    ResetFooter();
+}
+
+}  // namespace
 
 bool ReadLunchField(Settings& settings) {
     if (!ParseMinuteDurationText(g.fields[3].text, settings.lunchDurationMinutes)) return false;
@@ -132,23 +184,7 @@ bool ReadFieldSettings(Settings& settings) {
         return false;
     }
 
-    try {
-        (void)EffectiveWorkMinutes(settings.startMinutes, settings.endMinutes,
-            settings.lunchDurationMinutes, settings.deductLunch);
-    } catch (const std::invalid_argument&) { return false; }
-
-    const std::wstring& salaryText = g.fields[2].text;
-    if (salaryText.empty()) {
-        return false;
-    }
-    wchar_t* end = nullptr;
-    const double salary = std::wcstod(salaryText.c_str(), &end);
-    if (end == nullptr || *end != L'\0' || !std::isfinite(salary) ||
-        salary < 0.0 || salary > 1000000.0) {
-        return false;
-    }
-    settings.dailySalary = salary;
-    return true;
+    return ValidWorkSettings(settings) && ParseSalaryText(g.fields[2].text, settings.dailySalary);
 }
 
 // -- clipboard --------------------------------------------------------------
@@ -194,19 +230,44 @@ void WriteClipboardText(HWND owner, const std::wstring& text) {
 
 // -- actions ----------------------------------------------------------------
 
-void ApplySave() {
-    Settings parsed;
-    if (!ReadFieldSettings(parsed)) {
-        SetFooter(kValidationFooter, true);
-        Present();
-        return;
+void ApplyFieldChange(int index) {
+    if (index < 0 || index >= kFieldCount) return;
+    if (g.fields[index].text == SettingsField(index).text) return;
+    Settings draft = g.settings;
+    const auto& text = g.fields[index].text;
+    bool valid = false;
+    switch (index) {
+        case 0:
+            valid = ParseTimeText(text, draft.startMinutes);
+            if (valid && draft.endInputMode == EndInputMode::WorkDuration) {
+                draft.endMinutes = EndMinutesFromDuration(draft.startMinutes,
+                    WorkDurationMinutes(g.settings.startMinutes, g.settings.endMinutes));
+            }
+            break;
+        case 1:
+            if (draft.endInputMode == EndInputMode::WorkDuration) {
+                int duration = 0;
+                valid = ParseDurationText(text, duration);
+                if (valid) draft.endMinutes = EndMinutesFromDuration(draft.startMinutes, duration);
+            } else {
+                valid = ParseTimeText(text, draft.endMinutes);
+            }
+            break;
+        case 2:
+            valid = ParseSalaryText(text, draft.dailySalary);
+            break;
+        case 3:
+            valid = ParseMinuteDurationText(text, draft.lunchDurationMinutes);
+            if (valid && draft.lunchDurationMinutes == 0) draft.deductLunch = false;
+            break;
     }
-    g.settings = NormalizeSettings(parsed);
-    SaveSettings(g.settingsPath, g.settings);
-    // A new schedule can put "now" after the end time; that is an edit, not a
-    // shift ending, so rebase the reminder instead of letting it fire.
-    ResetShiftReminder();
-    SetExpanded(false);
+    if (valid && ValidWorkSettings(draft)) {
+        PersistLiveSettings(draft);
+    }
+    g.fields[index] = SettingsField(index);
+    if (index == 0 && g.settings.endInputMode == EndInputMode::WorkDuration)
+        g.fields[1] = SettingsField(1);
+    Present();
 }
 
 void ToggleAutostart() {
@@ -232,12 +293,16 @@ void TogglePinned() {
 }
 
 void ToggleDeductLunch() {
-    Settings draft = g.settings;
-    if (!ReadLunchField(draft) || draft.lunchDurationMinutes == 0) {
+    Settings draft;
+    if (!ReadFieldSettings(draft) || draft.lunchDurationMinutes == 0) {
         SetFooter(L"请先填写有效的午休时长(分钟)", true);
     } else {
-        g.editDeductLunch = !g.editDeductLunch;
-        ResetFooter();
+        draft.deductLunch = !g.editDeductLunch;
+        if (ValidWorkSettings(draft)) {
+            PersistLiveSettings(draft);
+        } else {
+            SetFooter(kValidationFooter, true);
+        }
     }
     Present();
 }
@@ -253,7 +318,8 @@ void SetEndInputMode(EndInputMode mode) {
     g.fields[1] = MakeField(mode == EndInputMode::WorkDuration
         ? FormatDurationHours(WorkDurationMinutes(draft.startMinutes, draft.endMinutes))
         : FormatTimeValue(draft.endMinutes));
-    g.editEndInputMode = mode;
+    draft.endInputMode = mode;
+    PersistLiveSettings(draft);
     if (g.focusedField == 1) g.fields[1] = SelectAll(g.fields[1]);
     ResetFooter();
     Present();

@@ -97,6 +97,7 @@ void SetFocusedField(int index) {
     if (g.focusedField == index) {
         return;
     }
+    ApplyFieldChange(g.focusedField);
     g.focusedField = index;
     g.caretVisible = index >= 0;
     if (index >= 0) {

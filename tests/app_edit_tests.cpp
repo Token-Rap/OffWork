@@ -9,6 +9,103 @@
 
 namespace {
 
+void SettingsApplyOnFocusLoss() {
+    using namespace offwork;
+    g.settings = Settings{};
+    g.settings.hideEarned = true;
+    g.expanded = true;
+    PopulateFields();
+    SaveSettings(g.settingsPath, g.settings);
+    const auto edit = [](int index, const wchar_t* text) {
+        SetFocusedField(index);
+        g.fields[index] = MakeField(text);
+        SetFocusedField(-1);
+    };
+    edit(0, L"08:30");
+    CHECK(g.settings.startMinutes == 510);
+    CHECK(LoadSettings(g.settingsPath).startMinutes == 510);
+    CHECK(BuildModel().settings.startMinutes == 510);
+    edit(1, L"17:30");
+    CHECK(g.settings.endMinutes == 1050);
+    CHECK(LoadSettings(g.settingsPath).endMinutes == 1050);
+    edit(2, L"1234.56");
+    CHECK(g.settings.dailySalary == 1234.56);
+    CHECK(LoadSettings(g.settingsPath).dailySalary == 1234.56);
+    edit(2, L"1234.567");
+    CHECK(g.settings.dailySalary == 1234.57);
+    CHECK(BuildModel().settings.dailySalary == 1234.57);
+    CHECK(LoadSettings(g.settingsPath).dailySalary == 1234.57);
+    edit(3, L"60");
+    CHECK(g.settings.lunchDurationMinutes == 60);
+    CHECK(LoadSettings(g.settingsPath).lunchDurationMinutes == 60);
+    ToggleDeductLunch();
+    CHECK(g.settings.deductLunch && LoadSettings(g.settingsPath).deductLunch);
+    CHECK(BuildModel().settings.deductLunch);
+    ToggleDeductLunch();
+    CHECK(!g.settings.deductLunch && !LoadSettings(g.settingsPath).deductLunch);
+    ToggleDeductLunch();
+    SetEndInputMode(EndInputMode::WorkDuration);
+    CHECK(g.settings.endInputMode == EndInputMode::WorkDuration);
+    CHECK(LoadSettings(g.settingsPath).endInputMode == EndInputMode::WorkDuration);
+    edit(1, L"8.5");
+    CHECK(g.settings.endMinutes == 1020);
+    CHECK(LoadSettings(g.settingsPath).endMinutes == 1020);
+    edit(0, L"22:00");
+    CHECK(g.settings.startMinutes == 1320 && g.settings.endMinutes == 390);
+    CHECK(LoadSettings(g.settingsPath).endMinutes == 390);
+    SetEndInputMode(EndInputMode::EndTime);
+    CHECK(LoadSettings(g.settingsPath).endInputMode == EndInputMode::EndTime);
+    CHECK(g.fields[1].text == L"06:30");
+    edit(3, L"");
+    CHECK(g.settings.lunchDurationMinutes == 0 && !g.settings.deductLunch);
+    CHECK(!g.editDeductLunch && !LoadSettings(g.settingsPath).deductLunch);
+    CHECK(g.settings.hideEarned && LoadSettings(g.settingsPath).hideEarned);
+    CHECK(g.expanded && g.footerText == kDefaultFooter && !g.footerIsError);
+
+    // Closing the panel is also a blur and must keep the final edit.
+    SetFocusedField(3);
+    g.fields[3] = MakeField(L"90");
+    SetExpanded(false);
+    CHECK(g.settings.lunchDurationMinutes == 90);
+    CHECK(LoadSettings(g.settingsPath).lunchDurationMinutes == 90);
+}
+
+void InvalidEditsRevertWithoutChangingSavedSettings() {
+    using namespace offwork;
+    g.settings = Settings{};
+    g.settings.lunchDurationMinutes = 60;
+    g.settings.deductLunch = true;
+    g.expanded = true;
+    PopulateFields();
+    SaveSettings(g.settingsPath, g.settings);
+    const wchar_t* valid[] = {L"09:00", L"18:00", L"500", L"60"};
+    const auto reject = [&](int index, const wchar_t* text) {
+        SetFocusedField(index);
+        g.fields[index] = MakeField(text);
+        SetFocusedField(-1);
+        CHECK(g.fields[index].text == valid[index]);
+        const auto saved = LoadSettings(g.settingsPath);
+        for (const auto& settings : {g.settings, saved, BuildModel().settings}) {
+            CHECK(settings.startMinutes == 540 && settings.endMinutes == 1080);
+            CHECK(settings.dailySalary == 500 && settings.lunchDurationMinutes == 60);
+            CHECK(settings.deductLunch);
+        }
+    };
+    for (const auto text : {L"", L"25:00", L"18:00", L"09:00x", L"999999999999999:00"}) reject(0, text);
+    for (const auto text : {L"", L"09:00", L"09:30", L"23:60", L"10:00x"}) reject(1, text);
+    for (const auto text : {L"", L"abc", L"nan", L"inf", L"1e9999", L"-1", L"1000001", L"500x"}) reject(2, text);
+    for (const auto text : {L"-1", L"60.5", L"1440", L"540", L"999999999999999999", L"60x"}) reject(3, text);
+    SetEndInputMode(EndInputMode::WorkDuration);
+    for (const auto text : {L"", L"0", L"24", L"0.001", L"nan", L"1e9999", L"1", L"8x"}) {
+        SetFocusedField(1);
+        g.fields[1] = MakeField(text);
+        SetFocusedField(-1);
+        CHECK(g.fields[1].text == L"9");
+        CHECK(g.settings.endMinutes == 1080 && LoadSettings(g.settingsPath).endMinutes == 1080);
+    }
+    g.expanded = false;
+}
+
 bool SamePixels(HDC first, HDC second, const RECT& rect) {
     GdiFlush();
     DIBSECTION a = {}, b = {};
@@ -82,6 +179,9 @@ void SmallControlsAndMaskRenderCorrectly() {
                 };
                 CHECK(HitTest(center(kEyeButton), m) == HotElement::HideEarned);
                 if (expanded) {
+                    // The former Save button area is no longer interactive.
+                    CHECK(HitTest(POINT{ScaleValue(180, scale, dpi), ScaleValue(613, scale, dpi)}, m)
+                          == HotElement::None);
                     CHECK(HitTest(center(kLunchDurationBox), m) == HotElement::LunchDurationField);
                     CHECK(FieldIndexOf(HotElement::LunchDurationField) == 3);
                     CHECK(HitTest(POINT{ScaleValue(300, scale, dpi), ScaleValue(470, scale, dpi)}, m)
@@ -103,6 +203,10 @@ void SmallControlsAndMaskRenderCorrectly() {
                 m.settings.hideEarned = true;
                 m.now.wHour = 10;
                 RenderFrame(a.dc(), m);
+                if (expanded) {
+                    CHECK(GetPixel(a.dc(), ScaleValue(180, scale, dpi),
+                                   ScaleValue(613, scale, dpi)) == kPanelBackground);
+                }
                 // Download activity has a ring on the indicator, not just a
                 // dimmed arrow. This point is on the ring above the arrow.
                 CHECK(GetPixel(a.dc(), ScaleValue(253, scale, dpi),
@@ -258,6 +362,11 @@ void OcrSilentlyUpdatesAndSavesTime() {
 
 int main() {
     using namespace offwork;
+    const auto settingsPath = std::filesystem::temp_directory_path() /
+        (L"offwork-live-settings-" + std::to_wstring(GetCurrentProcessId()) + L".ini");
+    g.settingsPath = settingsPath.wstring();
+    SettingsApplyOnFocusLoss();
+    InvalidEditsRevertWithoutChangingSavedSettings();
     g.settings = Settings{};
     PopulateFields();
     CHECK(g.fields[3].text.empty());
@@ -328,5 +437,6 @@ int main() {
     DropTargetRendersOnTheLayeredSurface();
     AllMoneyOutsideEditorIsMasked();
     SmallControlsAndMaskRenderCorrectly();
+    std::filesystem::remove(settingsPath);
     std::cout << "All lunch editor and silent OCR tests passed.\n";
 }

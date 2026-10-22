@@ -526,9 +526,6 @@ HotElement HitTest(POINT point, const RenderModel& model) {
     if (Contains(ToRect(kAutostartHit, scale, dpi), point)) {
         return HotElement::Autostart;
     }
-    if (Contains(ToRect(kSaveButton, scale, dpi), point)) {
-        return HotElement::Save;
-    }
     return HotElement::None;
 }
 
@@ -715,13 +712,6 @@ void RenderFrame(HDC dc, const RenderModel& model) {
     DrawTextInRect(dc, L"开机自启", ToRect(kAutostartLabel, scale, dpi),
                    model.fonts->label, kTextPrimary);
     DrawToggle(dc, model, kAutostartToggle, HotElement::Autostart, model.autostartEnabled);
-
-    FillRounded(
-        dc, ToRect(kSaveButton, scale, dpi), ScaleValue(6, scale, dpi),
-        model.hot == HotElement::Save ? kAccentHover : kAccent);
-    DrawTextInRect(
-        dc, L"保存设置", ToRect(kSaveButton, scale, dpi), model.fonts->button,
-        kOnAccent, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
     DrawTextInRect(
         dc, model.footerText, ToRect(kFooterText, scale, dpi), model.fonts->tiny,

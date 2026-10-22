@@ -98,7 +98,6 @@ inline constexpr LogicalRect kOpacityHit{37, 536, 323, 564};
 inline constexpr LogicalRect kAutostartLabel{37, 568, 240, 590};
 inline constexpr LogicalRect kAutostartToggle{279, 568, 323, 590};
 inline constexpr LogicalRect kAutostartHit{37, 564, 323, 594};
-inline constexpr LogicalRect kSaveButton{37, 598, 323, 628};
 inline constexpr LogicalRect kFooterText{37, 630, 323, 644};
 
 // Horizontal padding between an input box edge and its text.
@@ -120,7 +119,6 @@ enum class HotElement {
     DurationMode,
     Opacity,
     Autostart,
-    Save,
 };
 
 }  // namespace offwork
