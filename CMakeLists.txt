@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(OffWork VERSION 0.4.1 LANGUAGES CXX)
+project(OffWork VERSION 0.4.2 LANGUAGES CXX)
 
 configure_file(src/version.h.in generated/version.h @ONLY)
 configure_file(resources/app.manifest.in generated/offwork.manifest @ONLY)
