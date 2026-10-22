@@ -23,9 +23,9 @@ bool ReadFieldSettings(Settings& settings);
 std::wstring ReadClipboardText(HWND owner);
 void WriteClipboardText(HWND owner, const std::wstring& text);
 
-// Commit one field on blur; invalid input is restored from the saved settings.
+// Commit on blur; lunch is committed/restored as a pair when leaving its editor.
 void ApplyFieldChange(int fieldIndex);
-void ToggleDeductLunch();
+void ApplyLiveLunchChange();
 void BeginScreenshotOcr(const std::wstring& path);
 void PollScreenshotOcr();
 void ToggleAutostart();

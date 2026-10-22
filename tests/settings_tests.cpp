@@ -149,62 +149,59 @@ int main() {
     InvalidEndInputModeFallsBackWithoutChangingValidModes();
     EndInputModeRoundTripsThroughTheIniFile();
 
-    Settings lunch;
-    lunch.lunchDurationMinutes = 60;
-    lunch.deductLunch = true;
     const auto path = std::filesystem::temp_directory_path() /
         (L"offwork-lunch-" + std::to_wstring(GetCurrentProcessId()) + L".ini");
     std::filesystem::remove(path);
-    CHECK(offwork::LoadSettings(path.wstring()).lunchDurationMinutes == 0);
-    offwork::SaveSettings(path.wstring(), lunch);
     auto loaded = offwork::LoadSettings(path.wstring());
-    CHECK(loaded.lunchDurationMinutes == 60 && loaded.deductLunch);
-    CHECK(GetPrivateProfileIntW(L"work", L"lunchDurationMinutes", -1, path.c_str()) == 60);
-    // New key wins even if zero, empty, or invalid; never resurrect old lunch.
-    WritePrivateProfileStringW(L"work", L"lunchStartMinutes", L"720", path.c_str());
-    WritePrivateProfileStringW(L"work", L"lunchEndMinutes", L"810", path.c_str());
-    CHECK(offwork::LoadSettings(path.wstring()).lunchDurationMinutes == 60);
-    for (const auto value : {L"0", L"", L"-1", L"1440", L"60oops", L"60.5", L"99999999999999999999"}) {
+    CHECK(loaded.lunchStartMinutes == 720 && loaded.lunchEndMinutes == 810);
+    // Duration-only settings migrate from noon, independently of the old checkbox.
+    for (const auto deduct : {L"0", L"1"}) {
+        WritePrivateProfileStringW(L"work", L"deductLunch", deduct, path.c_str());
+        for (const int duration : {30, 60, 90, 180}) {
+            WritePrivateProfileStringW(L"work", L"lunchDurationMinutes",
+                std::to_wstring(duration).c_str(), path.c_str());
+            loaded = offwork::LoadSettings(path.wstring());
+            CHECK(loaded.lunchStartMinutes == 720);
+            CHECK(loaded.lunchEndMinutes == 720 + duration);
+            CHECK(loaded.startMinutes == 540 && loaded.endMinutes == 1080);
+        }
+    }
+    for (const auto value : {L"0", L"", L"-1", L"1440", L"60oops", L"60.5", L"99999999999999999999", L"540"}) {
         WritePrivateProfileStringW(L"work", L"lunchDurationMinutes", value, path.c_str());
         loaded = offwork::LoadSettings(path.wstring());
-        CHECK(loaded.lunchDurationMinutes == 0 && !loaded.deductLunch);
+        CHECK(loaded.lunchStartMinutes == -1 && loaded.lunchEndMinutes == -1);
     }
-    WritePrivateProfileStringW(L"work", L"lunchDurationMinutes", nullptr, path.c_str());
+    // Explicit interval keys take precedence, even when invalid or incomplete.
+    WritePrivateProfileStringW(L"work", L"lunchDurationMinutes", L"60", path.c_str());
+    WritePrivateProfileStringW(L"work", L"lunchStartMinutes", L"690", path.c_str());
+    WritePrivateProfileStringW(L"work", L"lunchEndMinutes", L"780", path.c_str());
     loaded = offwork::LoadSettings(path.wstring());
-    CHECK(loaded.lunchDurationMinutes == 90 && loaded.deductLunch);
-    CHECK(loaded.startMinutes == 540 && loaded.endMinutes == 1080);
+    CHECK(loaded.lunchStartMinutes == 690 && loaded.lunchEndMinutes == 780);
     offwork::SaveSettings(path.wstring(), loaded);
-    wchar_t legacy[32] = {};
-    CHECK(GetPrivateProfileStringW(L"work", L"lunchStartMinutes", L"", legacy, 32, path.c_str()) == 0);
-    CHECK(GetPrivateProfileStringW(L"work", L"lunchEndMinutes", L"", legacy, 32, path.c_str()) == 0);
-    CHECK(offwork::LoadSettings(path.wstring()).lunchDurationMinutes == 90);
-    WritePrivateProfileStringW(L"work", L"lunchDurationMinutes", nullptr, path.c_str());
-    WritePrivateProfileStringW(L"work", L"lunchStartMinutes", L"1410", path.c_str());
-    WritePrivateProfileStringW(L"work", L"lunchEndMinutes", L"30", path.c_str());
-    loaded = offwork::LoadSettings(path.wstring());
-    CHECK(loaded.lunchDurationMinutes == 60 && loaded.deductLunch);
-    for (const auto value : {L"1410", L"1440", L"-1", L"oops", L"30oops", L"99999999999999999999", L""}) {
+    CHECK(GetPrivateProfileIntW(L"work", L"lunchStartMinutes", -2, path.c_str()) == 690);
+    CHECK(GetPrivateProfileIntW(L"work", L"lunchEndMinutes", -2, path.c_str()) == 780);
+    wchar_t old[32] = {};
+    CHECK(GetPrivateProfileStringW(L"work", L"lunchDurationMinutes", L"", old, 32, path.c_str()) == 0);
+    CHECK(GetPrivateProfileStringW(L"work", L"deductLunch", L"", old, 32, path.c_str()) == 0);
+    for (const auto value : {L"690", L"1440", L"-1", L"oops", L"780oops", L"99999999999999999999", L"", L"540", L"1081"}) {
         WritePrivateProfileStringW(L"work", L"lunchEndMinutes", value, path.c_str());
         loaded = offwork::LoadSettings(path.wstring());
-        CHECK(loaded.lunchDurationMinutes == 0 && !loaded.deductLunch);
+        CHECK(loaded.lunchStartMinutes == -1 && loaded.lunchEndMinutes == -1);
     }
     WritePrivateProfileStringW(L"work", L"lunchEndMinutes", nullptr, path.c_str());
-    CHECK(offwork::LoadSettings(path.wstring()).lunchDurationMinutes == 0);
-    for (const int invalid : {-1, 1440, 99999}) {
-        lunch.lunchDurationMinutes = invalid;
-        loaded = NormalizeSettings(lunch);
-        CHECK(loaded.lunchDurationMinutes == 0 && !loaded.deductLunch);
-    }
-    for (const int noWork : {0, 540, 600}) {
-        lunch.lunchDurationMinutes = noWork;
-        CHECK(!NormalizeSettings(lunch).deductLunch);
-    }
-    lunch.lunchDurationMinutes = 60;
-    lunch.endInputMode = EndInputMode::WorkDuration;
-    offwork::SaveSettings(path.wstring(), lunch);
+    CHECK(offwork::LoadSettings(path.wstring()).lunchStartMinutes == -1);
+    // Disabled legacy lunches survive a save/reload without restoring defaults.
+    offwork::SaveSettings(path.wstring(), loaded);
+    CHECK(offwork::LoadSettings(path.wstring()).lunchEndMinutes == -1);
+    Settings overnight;
+    overnight.startMinutes = 1320;
+    overnight.endMinutes = 360;
+    overnight.lunchStartMinutes = 1410;
+    overnight.lunchEndMinutes = 30;
+    offwork::SaveSettings(path.wstring(), overnight);
     loaded = offwork::LoadSettings(path.wstring());
-    CHECK(loaded.lunchDurationMinutes == 60 && loaded.endMinutes == 1080);
-    CHECK(loaded.endInputMode == EndInputMode::WorkDuration && loaded.deductLunch);
+    CHECK(loaded.startMinutes == 1320 && loaded.endMinutes == 360);
+    CHECK(loaded.lunchStartMinutes == 1410 && loaded.lunchEndMinutes == 30);
     std::filesystem::remove(path);
     std::cout << "All OffWork settings tests passed.\n";
     return 0;

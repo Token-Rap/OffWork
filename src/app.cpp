@@ -466,9 +466,6 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 case HotElement::DurationMode:
                     SetEndInputMode(EndInputMode::WorkDuration);
                     break;
-                case HotElement::DeductLunch:
-                    ToggleDeductLunch();
-                    break;
                 default:
                     break;
             }
@@ -524,6 +521,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             if (g.footerIsError) {
                 ResetFooter();
             }
+            if (index >= 3) ApplyLiveLunchChange();
             g.caretVisible = true;
             SetTimer(window, kCaretTimer, kCaretBlinkMs, nullptr);
             Present();

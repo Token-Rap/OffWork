@@ -29,11 +29,10 @@ inline constexpr UINT_PTR kCaretTimer = 2;
 inline constexpr UINT kCaretBlinkMs = 530;
 inline constexpr std::size_t kTimeMaxLength = 5;
 inline constexpr std::size_t kSalaryMaxLength = 16;
-inline constexpr std::size_t kLunchMaxLength = 4;
-inline constexpr int kFieldCount = 4;
+inline constexpr int kFieldCount = 5;
 
 inline constexpr wchar_t kDefaultFooter[] = L"设置和窗口大小保存在本机";
-inline constexpr wchar_t kValidationFooter[] = L"请检查时间、工作时长、午休分钟数和日薪";
+inline constexpr wchar_t kValidationFooter[] = L"请检查时间、工作时长、午休起止时间和日薪";
 
 struct AppState {
     HWND window = nullptr;
@@ -53,7 +52,6 @@ struct AppState {
     bool expanded = false;
     bool pinned = true;
     bool autostartEnabled = false;
-    bool editDeductLunch = false;
     bool screenshotDragActive = false;
     std::future<OcrResult> ocrTask;
     EndInputMode editEndInputMode = EndInputMode::EndTime;

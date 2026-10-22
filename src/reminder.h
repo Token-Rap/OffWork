@@ -38,7 +38,7 @@ ReminderState ResetReminder(WorkdayPhase currentPhase, int remainingSeconds = -1
 
 // One clock tick. End notification requires a fresh Working -> AfterWork
 // transition. Five-minute notification requires crossing the REAL remaining-time
-// threshold while Working, never the lunch-adjusted countdown; startup, reset
+// threshold while Working, including during lunch; startup, reset
 // and stale observations stay silent.
 // remainingSeconds = -1 keeps the legacy end-only API available.
 ReminderDecision TickReminder(

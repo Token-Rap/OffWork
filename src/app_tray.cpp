@@ -110,9 +110,9 @@ PhaseNow CurrentPhase() {
     try {
         const auto snapshot = CalculateWorkday(
             nowSeconds, g.settings.startMinutes, g.settings.endMinutes,
-            g.settings.dailySalary, g.settings.lunchDurationMinutes, g.settings.deductLunch);
+            g.settings.dailySalary, g.settings.lunchStartMinutes, g.settings.lunchEndMinutes);
         result.phase = snapshot.phase;
-        // Reminders follow the real end, even when the lunch countdown is zero.
+        // Keep reminders running during lunch using the actual shift end.
         result.remainingSeconds = snapshot.remainingSeconds;
     } catch (...) {
         // NormalizeSettings makes this unreachable; never let a clock tick

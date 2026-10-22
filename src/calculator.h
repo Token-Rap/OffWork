@@ -18,7 +18,7 @@ struct WorkdaySnapshot {
     int remainingSeconds;
     double earned;
     double progress;
-    int countdownSeconds = 0;
+    bool onLunch = false;
 };
 
 inline int WorkDurationMinutes(int startMinutes, int endMinutes) {
@@ -55,26 +55,20 @@ inline int DurationMinutesFromHours(double hours) {
     return minutes;
 }
 
-inline int DeductedLunchMinutes(int lunchDuration, bool deduct) {
-    if (lunchDuration < 0 || lunchDuration >= 1440) {
-        throw std::invalid_argument("lunch duration");
-    }
-    return deduct ? lunchDuration : 0;
-}
-
-inline int EffectiveWorkMinutes(int start, int end, int lunchDuration, bool deduct) {
+// Offsets are relative to clock-in so overnight shifts/lunches work as well.
+// A pair of -1 values preserves legacy settings with no lunch.
+inline int LunchDurationMinutes(int start, int end, int lunchStart, int lunchEnd) {
     const int duration = WorkDurationMinutes(start, end);
-    const int effective = duration - DeductedLunchMinutes(lunchDuration, deduct);
-    if (effective <= 0) throw std::invalid_argument("no working time");
-    return effective;
+    if (lunchStart == -1 && lunchEnd == -1) return 0;
+    const int lunch = WorkDurationMinutes(lunchStart, lunchEnd);
+    const int offset = (lunchStart - start + 1440) % 1440;
+    if (offset + lunch > duration || lunch >= duration)
+        throw std::invalid_argument("lunch outside shift");
+    return lunch;
 }
 
-inline int EndMinutesWithLunch(int start, int duration, int lunchDuration, bool deduct) {
-    // Entered hours describe the full paid shift span. Lunch only changes the
-    // displayed countdown; enabling deduction must not move the scheduled end.
-    const int end = EndMinutesFromDuration(start, duration);
-    (void)EffectiveWorkMinutes(start, end, lunchDuration, deduct);
-    return end;
+inline int EffectiveWorkMinutes(int start, int end, int lunchStart, int lunchEnd) {
+    return WorkDurationMinutes(start, end) - LunchDurationMinutes(start, end, lunchStart, lunchEnd);
 }
 
 inline WorkdaySnapshot CalculateWorkday(
@@ -82,7 +76,7 @@ inline WorkdaySnapshot CalculateWorkday(
     int startMinutes,
     int endMinutes,
     double dailySalary,
-    int lunchDuration = 0, bool deductLunch = false) {
+    int lunchStart = -1, int lunchEnd = -1) {
     constexpr int secondsPerDay = 24 * 60 * 60;
 
     if (nowSeconds < 0 || nowSeconds >= secondsPerDay) {
@@ -126,19 +120,17 @@ inline WorkdaySnapshot CalculateWorkday(
         remaining = duration - elapsed;
     }
 
-    // Preserve the existing lunch-duration validation; all scheduled time is paid.
-    (void)EffectiveWorkMinutes(startMinutes, endMinutes, lunchDuration, deductLunch);
+    const int lunchDuration = LunchDurationMinutes(startMinutes, endMinutes, lunchStart, lunchEnd) * 60;
+    const int lunchOffset = ((lunchStart - startMinutes + 1440) % 1440) * 60;
+    const bool onLunch = phase == WorkdayPhase::Working && lunchDuration > 0 &&
+        elapsed >= lunchOffset && elapsed < lunchOffset + lunchDuration;
+    const int lunchElapsed = lunchDuration == 0 ? 0 :
+        std::clamp(elapsed - lunchOffset, 0, lunchDuration);
     const double progress = std::clamp(
-        static_cast<double>(elapsed) / static_cast<double>(duration), 0.0, 1.0);
+        static_cast<double>(elapsed - lunchElapsed) /
+            static_cast<double>(duration - lunchDuration), 0.0, 1.0);
     const double earned = dailySalary * progress;
-    // No lunch interval is tracked: subtract the full lunch throughout Working,
-    // including before/after noon and near shift end, clamping at zero. A zero
-    // display never ends the shift early or changes earnings/reminder timing.
-    // BeforeWork still counts down to clock-in without any lunch deduction.
-    const int countdown = phase == WorkdayPhase::Working
-        ? std::max(0, remaining - DeductedLunchMinutes(lunchDuration, deductLunch) * 60)
-        : remaining;
-    return {phase, remaining, earned, progress, countdown};
+    return {phase, remaining, earned, progress, onLunch};
 }
 
 }  // namespace offwork

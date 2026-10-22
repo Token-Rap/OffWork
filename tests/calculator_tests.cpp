@@ -5,6 +5,7 @@
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
+#include <utility>
 
 namespace {
 
@@ -83,84 +84,51 @@ int main() {
     }
     CHECK(invalidSalary);
 
-    // Lunch is paid: earnings and progress use the entire scheduled shift.
-    const auto lunch = CalculateWorkday(12 * 3600, 540, 1080, 800, 60, true);
-    CHECK(lunch.remainingSeconds == 6 * 3600);
-    CHECK(Near(lunch.progress, 1.0 / 3.0));
-    CHECK(Near(lunch.earned, 800.0 / 3.0));
-    const auto halfway = CalculateWorkday(14 * 3600, 540, 1080, 800, 60, true);
-    CHECK(halfway.remainingSeconds == 4 * 3600);
-    CHECK(Near(halfway.progress, 5.0 / 9.0));
-    CHECK(Near(halfway.earned, 800.0 * 5.0 / 9.0));
-    CHECK(Near(CalculateWorkday(9 * 3600 + 30 * 60, 540, 1080, 800, 60, true).progress, 1.0 / 18.0));
-    CHECK(Near(CalculateWorkday(10 * 3600, 540, 1080, 800, 60, true).progress, 1.0 / 9.0));
-    CHECK(Near(CalculateWorkday(8 * 3600, 540, 1080, 800, 60, true).earned, 0));
-    CHECK(CalculateWorkday(8 * 3600, 540, 1080, 800, 60, true).remainingSeconds == 3600);
-    CHECK(Near(CalculateWorkday(18 * 3600, 540, 1080, 800, 60, true).earned, 800));
-    CHECK(Near(CalculateWorkday(13 * 3600, 540, 1080, 900, 60, false).earned, 400));
-    CHECK(Near(CalculateWorkday(13 * 3600, 540, 1080, 900, 0, true).earned, 400));
-    // Lunch never changes the scheduled end or the real remaining time.
-    const int deductedEnd = offwork::EndMinutesWithLunch(540, 480, 60, true);
-    CHECK(deductedEnd == 1020);
-    const auto deducted = CalculateWorkday(13 * 3600, 540, deductedEnd, 700, 60, true);
-    const auto continuous = CalculateWorkday(13 * 3600, 540, 1020, 700, 60, false);
-    CHECK(deducted.remainingSeconds == 4 * 3600);
-    CHECK(deducted.remainingSeconds == continuous.remainingSeconds);
-    CHECK(Near(deducted.progress, 0.5));
-    CHECK(Near(deducted.earned, 350));
-    CHECK(Near(continuous.earned, 350));
-    CHECK(Near(CalculateWorkday(17 * 3600, 540, deductedEnd, 700, 60, true).earned, 700));
-    CHECK(offwork::EndMinutesWithLunch(540, 120, 60, true) == 660);
-    CHECK(offwork::EndMinutesWithLunch(540, 480, 60, false) == 1020);
-    CHECK(offwork::EndMinutesWithLunch(540, 480, 0, true) == 1020);
-    CHECK(offwork::EndMinutesWithLunch(1320, 480, 60, true) == 360);
-    const auto night = CalculateWorkday(0, 1320, 360, 700, 60, true);
-    CHECK(night.remainingSeconds == 360 * 60);
-    CHECK(Near(night.earned, 175));
-    CHECK(Near(CalculateWorkday(23 * 3600, 1320, 360, 700, 60, true).earned, 87.5));
-    CHECK(offwork::EffectiveWorkMinutes(540, 780, 60, true) == 180);
-    for (const int lunchDuration : {60, 90, -1, 1440}) {
-        bool noWork = false;
-        try { (void)CalculateWorkday(12*3600, 720, 780, 500, lunchDuration, true); }
-        catch (const std::invalid_argument&) { noWork = true; }
-        CHECK(noWork);
+    // 09:00-18:00, lunch 12:00-13:30: 7.5 paid hours at 100/hour.
+    const auto atLunch = CalculateWorkday(12 * 3600, 540, 1080, 750, 720, 810);
+    CHECK(atLunch.onLunch);
+    CHECK(Near(atLunch.earned, 300));
+    const auto inLunch = CalculateWorkday(13 * 3600, 540, 1080, 750, 720, 810);
+    CHECK(Near(inLunch.earned, 300));
+    CHECK(Near(inLunch.progress, 0.4));
+    CHECK(inLunch.remainingSeconds == 5 * 3600);
+    const auto lunchEnd = CalculateWorkday(13 * 3600 + 30 * 60, 540, 1080, 750, 720, 810);
+    CHECK(!lunchEnd.onLunch);
+    CHECK(Near(lunchEnd.earned, 300));
+    CHECK(Near(CalculateWorkday(14 * 3600, 540, 1080, 750, 720, 810).earned, 350));
+    CHECK(Near(CalculateWorkday(18 * 3600, 540, 1080, 750, 720, 810).earned, 750));
+    // Every lunch second is frozen, while the real deadline still advances.
+    for (int now = 12 * 3600; now < 13 * 3600 + 30 * 60; ++now) {
+        const auto frozen = CalculateWorkday(now, 540, 1080, 750, 720, 810);
+        CHECK(frozen.phase == WorkdayPhase::Working && frozen.onLunch);
+        CHECK(Near(frozen.earned, 300) && Near(frozen.progress, 0.4));
+        CHECK(frozen.remainingSeconds == 18 * 3600 - now);
     }
-    for (const int lunchDuration : {480, 481, -1, 1440}) {
+    CHECK(Near(CalculateWorkday(12 * 3600 - 1, 540, 1080, 750, 720, 810).earned, 300 - 100.0 / 3600));
+    CHECK(Near(CalculateWorkday(13 * 3600 + 30 * 60 + 1, 540, 1080, 750, 720, 810).earned, 300 + 100.0 / 3600));
+    CHECK(!CalculateWorkday(12 * 3600 - 1, 540, 1080, 750, 720, 810).onLunch);
+    CHECK(Near(CalculateWorkday(8 * 3600, 540, 1080, 750, 720, 810).earned, 0));
+    CHECK(CalculateWorkday(8 * 3600, 540, 1080, 750, 720, 810).remainingSeconds == 3600);
+    CHECK(!CalculateWorkday(18 * 3600, 540, 1080, 750, 720, 810).onLunch);
+    // A restart in the lunch window derives the same frozen value, even at midnight.
+    const auto nightLunch = CalculateWorkday(0, 1320, 360, 700, 1410, 30);
+    CHECK(nightLunch.onLunch && Near(nightLunch.earned, 150));
+    CHECK(nightLunch.remainingSeconds == 6 * 3600);
+    CHECK(Near(CalculateWorkday(30 * 60, 1320, 360, 700, 1410, 30).earned, 150));
+    CHECK(!CalculateWorkday(30 * 60, 1320, 360, 700, 1410, 30).onLunch);
+    CHECK(Near(CalculateWorkday(3600, 1320, 360, 700, 1410, 30).earned, 200));
+    CHECK(Near(CalculateWorkday(6 * 3600, 1320, 360, 700, 1410, 30).earned, 700));
+    // Lunch can touch either shift boundary but cannot consume all work time.
+    CHECK(CalculateWorkday(9 * 3600, 540, 1080, 800, 540, 600).onLunch);
+    CHECK(CalculateWorkday(17 * 3600, 540, 1080, 800, 1020, 1080).onLunch);
+    CHECK(Near(CalculateWorkday(17 * 3600, 540, 1080, 800, 1020, 1080).earned, 800));
+    for (const auto interval : {std::pair{720, 720}, {780, 720}, {500, 600},
+                               {1020, 1081}, {540, 1080}, {-1, 780}, {720, 1440}}) {
         bool invalidLunch = false;
-        try { (void)offwork::EndMinutesWithLunch(540, 480, lunchDuration, true); }
+        try { (void)CalculateWorkday(12 * 3600, 540, 1080, 750, interval.first, interval.second); }
         catch (const std::invalid_argument&) { invalidLunch = true; }
         CHECK(invalidLunch);
     }
-    CHECK(offwork::EndMinutesWithLunch(540, 1380, 60, true) == 480);
-    CHECK(offwork::EndMinutesWithLunch(540, 1439, 60, true) == 539);
-
-    // Compare every second, including pre-work, noon, the zero-display tail,
-    // real shift end and overnight rollover. The checkbox changes only display.
-    for (const int start : {540, 1320}) {
-        const int end = EndMinutesFromDuration(start, 480);
-        for (const int lunchMinutes : {0, 60, 90}) {
-            for (int now = 0; now < 24 * 3600; ++now) {
-                const auto paid = CalculateWorkday(now, start, end, 800, lunchMinutes, false);
-                const auto checked = CalculateWorkday(now, start, end, 800, lunchMinutes, true);
-                CHECK(checked.phase == paid.phase);
-                CHECK(checked.remainingSeconds == paid.remainingSeconds);
-                CHECK(Near(checked.earned, paid.earned));
-                CHECK(Near(checked.progress, paid.progress));
-                CHECK(paid.countdownSeconds == paid.remainingSeconds);
-                const int expected = paid.phase == WorkdayPhase::Working
-                    ? std::max(0, paid.remainingSeconds - lunchMinutes * 60)
-                    : paid.remainingSeconds;
-                CHECK(checked.countdownSeconds == expected);
-            }
-        }
-    }
-    const auto zeroCountdown = CalculateWorkday(17 * 3600, 540, 1080, 900, 60, true);
-    CHECK(zeroCountdown.countdownSeconds == 0);
-    CHECK(zeroCountdown.phase == WorkdayPhase::Working);
-    CHECK(Near(zeroCountdown.earned, 800));
-    // The paid hourly rate stays 900 / 9 = 100, including the lunch deduction.
-    CHECK(Near(CalculateWorkday(13 * 3600, 540, 1080, 900, 60, true).earned -
-               CalculateWorkday(12 * 3600, 540, 1080, 900, 60, true).earned, 100));
     std::cout << "All OffWork calculation tests passed.\n";
     return 0;
 }

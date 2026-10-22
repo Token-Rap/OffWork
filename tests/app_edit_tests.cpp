@@ -35,50 +35,31 @@ void SettingsApplyOnFocusLoss() {
     CHECK(g.settings.dailySalary == 1234.57);
     CHECK(BuildModel().settings.dailySalary == 1234.57);
     CHECK(LoadSettings(g.settingsPath).dailySalary == 1234.57);
-    edit(3, L"60");
-    CHECK(g.settings.lunchDurationMinutes == 60);
-    CHECK(LoadSettings(g.settingsPath).lunchDurationMinutes == 60);
-    ToggleDeductLunch();
-    CHECK(g.settings.deductLunch && LoadSettings(g.settingsPath).deductLunch);
-    CHECK(BuildModel().settings.deductLunch);
-    ToggleDeductLunch();
-    CHECK(!g.settings.deductLunch && !LoadSettings(g.settingsPath).deductLunch);
-    ToggleDeductLunch();
+    edit(3, L"11:30");
+    edit(4, L"13:00");
+    CHECK(g.settings.lunchStartMinutes == 690 && g.settings.lunchEndMinutes == 780);
+    CHECK(LoadSettings(g.settingsPath).lunchStartMinutes == 690);
+    CHECK(BuildModel().settings.lunchEndMinutes == 780);
     SetEndInputMode(EndInputMode::WorkDuration);
-    CHECK(g.settings.endInputMode == EndInputMode::WorkDuration);
-    CHECK(LoadSettings(g.settingsPath).endInputMode == EndInputMode::WorkDuration);
     edit(1, L"8.5");
     CHECK(g.settings.endMinutes == 1020);
     CHECK(LoadSettings(g.settingsPath).endMinutes == 1020);
-    edit(0, L"22:00");
-    CHECK(g.settings.startMinutes == 1320 && g.settings.endMinutes == 390);
-    CHECK(LoadSettings(g.settingsPath).endMinutes == 390);
-    SetEndInputMode(EndInputMode::EndTime);
-    CHECK(LoadSettings(g.settingsPath).endInputMode == EndInputMode::EndTime);
-    CHECK(g.fields[1].text == L"06:30");
-    edit(3, L"");
-    CHECK(g.settings.lunchDurationMinutes == 0 && !g.settings.deductLunch);
-    CHECK(!g.editDeductLunch && !LoadSettings(g.settingsPath).deductLunch);
     CHECK(g.settings.hideEarned && LoadSettings(g.settingsPath).hideEarned);
-    CHECK(g.expanded && g.footerText == kDefaultFooter && !g.footerIsError);
-
-    // Closing the panel is also a blur and must keep the final edit.
-    SetFocusedField(3);
-    g.fields[3] = MakeField(L"90");
+    // Closing the panel also applies the final edit.
+    SetFocusedField(4);
+    g.fields[4] = MakeField(L"13:30");
     SetExpanded(false);
-    CHECK(g.settings.lunchDurationMinutes == 90);
-    CHECK(LoadSettings(g.settingsPath).lunchDurationMinutes == 90);
+    CHECK(g.settings.lunchEndMinutes == 810);
+    CHECK(LoadSettings(g.settingsPath).lunchEndMinutes == 810);
 }
 
 void InvalidEditsRevertWithoutChangingSavedSettings() {
     using namespace offwork;
     g.settings = Settings{};
-    g.settings.lunchDurationMinutes = 60;
-    g.settings.deductLunch = true;
     g.expanded = true;
     PopulateFields();
     SaveSettings(g.settingsPath, g.settings);
-    const wchar_t* valid[] = {L"09:00", L"18:00", L"500", L"60"};
+    const wchar_t* valid[] = {L"09:00", L"18:00", L"500", L"12:00", L"13:30"};
     const auto reject = [&](int index, const wchar_t* text) {
         SetFocusedField(index);
         g.fields[index] = MakeField(text);
@@ -87,14 +68,15 @@ void InvalidEditsRevertWithoutChangingSavedSettings() {
         const auto saved = LoadSettings(g.settingsPath);
         for (const auto& settings : {g.settings, saved, BuildModel().settings}) {
             CHECK(settings.startMinutes == 540 && settings.endMinutes == 1080);
-            CHECK(settings.dailySalary == 500 && settings.lunchDurationMinutes == 60);
-            CHECK(settings.deductLunch);
+            CHECK(settings.dailySalary == 500);
+            CHECK(settings.lunchStartMinutes == 720 && settings.lunchEndMinutes == 810);
         }
     };
     for (const auto text : {L"", L"25:00", L"18:00", L"09:00x", L"999999999999999:00"}) reject(0, text);
     for (const auto text : {L"", L"09:00", L"09:30", L"23:60", L"10:00x"}) reject(1, text);
     for (const auto text : {L"", L"abc", L"nan", L"inf", L"1e9999", L"-1", L"1000001", L"500x"}) reject(2, text);
-    for (const auto text : {L"-1", L"60.5", L"1440", L"540", L"999999999999999999", L"60x"}) reject(3, text);
+    for (const auto text : {L"-1", L"60.5", L"24:00", L"08:59", L"13:30", L"14:00", L"1:00", L"12:0", L"12:00x"}) reject(3, text);
+    for (const auto text : {L"12:00", L"11:00", L"18:01", L"24:00", L"13:60", L"13:3"}) reject(4, text);
     SetEndInputMode(EndInputMode::WorkDuration);
     for (const auto text : {L"", L"0", L"24", L"0.001", L"nan", L"1e9999", L"1", L"8x"}) {
         SetFocusedField(1);
@@ -104,6 +86,45 @@ void InvalidEditsRevertWithoutChangingSavedSettings() {
         CHECK(g.settings.endMinutes == 1080 && LoadSettings(g.settingsPath).endMinutes == 1080);
     }
     g.expanded = false;
+}
+
+void OvernightLunchCanBeEnteredAsAPair() {
+    using namespace offwork;
+    for (const int first : {3, 4}) {
+        g.settings = Settings{};
+        g.settings.startMinutes = 1320;
+        g.settings.endMinutes = 360;
+        g.settings.lunchStartMinutes = g.settings.lunchEndMinutes = -1;
+        g.focusedField = -1;
+        PopulateFields();
+        SaveSettings(g.settingsPath, g.settings);
+        SetFocusedField(first);
+        g.fields[first] = MakeField(first == 3 ? L"23:30" : L"00:30");
+        ApplyLiveLunchChange();
+        CHECK(g.settings.lunchStartMinutes == -1);
+        SetFocusedField(first == 3 ? 4 : 3);
+        CHECK(g.fields[first].text == (first == 3 ? L"23:30" : L"00:30"));
+        g.fields[first == 3 ? 4 : 3] = MakeField(first == 3 ? L"00:30" : L"23:30");
+        ApplyLiveLunchChange();
+        CHECK(g.settings.lunchStartMinutes == 1410 && g.settings.lunchEndMinutes == 30);
+        SetFocusedField(-1);
+        CHECK(LoadSettings(g.settingsPath).lunchEndMinutes == 30);
+        CHECK(g.settings.startMinutes == 1320 && g.settings.endMinutes == 360);
+        // Leaving an incomplete pair restores both saved endpoints.
+        SetFocusedField(3);
+        g.fields[3] = MakeField(L"23:");
+        SetFocusedField(4);
+        SetFocusedField(2); // The unchanged end must still revert the start draft.
+        CHECK(g.fields[3].text == L"23:30" && g.fields[4].text == L"00:30");
+        SetFocusedField(3);
+        g.fields[3] = MakeField(L"23:");
+        SetFocusedField(4);
+        g.fields[4] = MakeField(L"08:00");
+        SetFocusedField(2);
+        CHECK(g.fields[3].text == L"23:30" && g.fields[4].text == L"00:30");
+        CHECK(LoadSettings(g.settingsPath).lunchStartMinutes == 1410);
+        SetFocusedField(-1);
+    }
 }
 
 bool SamePixels(HDC first, HDC second, const RECT& rect) {
@@ -122,32 +143,37 @@ bool SamePixels(HDC first, HDC second, const RECT& rect) {
     return true;
 }
 
-void LunchOnlyChangesTheOffWorkCountdown() {
+void LunchFreezesCountdownAndEarningsOnScreen() {
     using namespace offwork;
-    RenderModel model;
-    model.settings.dailySalary = 900;
-    model.settings.lunchDurationMinutes = 60;
-    auto fonts = CreateFonts(100, 96);
-    model.fonts = &fonts;
-    const SIZE size = WindowSizeFor(100, 96, false);
-    LayeredSurface unchecked, checked;
-    CHECK(unchecked.EnsureSize(size.cx, size.cy));
-    CHECK(checked.EnsureSize(size.cx, size.cy));
-    for (const int hour : {8, 9, 12, 17, 18}) {
-        model.now.wHour = static_cast<WORD>(hour);
-        model.settings.deductLunch = false;
-        RenderFrame(unchecked.dc(), model);
-        model.settings.deductLunch = true;
-        RenderFrame(checked.dc(), model);
-        CHECK(SamePixels(unchecked.dc(), checked.dc(), ScaleRect(kEarnedAmount, 100, 96)));
-        CHECK(SamePixels(unchecked.dc(), checked.dc(), ScaleRect(kSalaryText, 100, 96)));
-        CHECK(SamePixels(unchecked.dc(), checked.dc(), ScaleRect(kProgressText, 100, 96)));
-        CHECK(SamePixels(unchecked.dc(), checked.dc(), ScaleRect(kProgressTrackRect, 100, 96)));
-        CHECK(SamePixels(unchecked.dc(), checked.dc(), ScaleRect(kStatusText, 100, 96)));
-        CHECK(SamePixels(unchecked.dc(), checked.dc(), ScaleRect(kCountdownText, 100, 96))
-              == (hour < 9 || hour >= 18));
+    for (const int scale : {75, 100, 150}) {
+        for (const UINT dpi : {96u, 144u, 192u}) {
+            RenderModel model;
+            model.settings.dailySalary = 750;
+            model.settings.uiScalePercent = scale;
+            model.dpi = dpi;
+            auto fonts = CreateFonts(scale, dpi);
+            model.fonts = &fonts;
+            const SIZE size = WindowSizeFor(scale, dpi, false);
+            LayeredSurface first, second;
+            CHECK(first.EnsureSize(size.cx, size.cy) && second.EnsureSize(size.cx, size.cy));
+            model.now.wHour = 12;
+            RenderFrame(first.dc(), model);
+            model.now.wHour = 13;
+            model.now.wSecond = 59;
+            RenderFrame(second.dc(), model);
+            for (const auto rect : {kCountdownText, kEarnedAmount, kProgressText, kProgressTrackRect})
+                CHECK(SamePixels(first.dc(), second.dc(), ScaleRect(rect, scale, dpi)));
+            model.now.wMinute = 30;
+            model.now.wSecond = 0;
+            RenderFrame(second.dc(), model);
+            CHECK(!SamePixels(first.dc(), second.dc(), ScaleRect(kCountdownText, scale, dpi)));
+            CHECK(SamePixels(first.dc(), second.dc(), ScaleRect(kEarnedAmount, scale, dpi)));
+            model.now.wMinute = 31;
+            RenderFrame(second.dc(), model);
+            CHECK(!SamePixels(first.dc(), second.dc(), ScaleRect(kEarnedAmount, scale, dpi)));
+            DestroyFonts(fonts);
+        }
     }
-    DestroyFonts(fonts);
 }
 
 void AllMoneyOutsideEditorIsMasked() {
@@ -210,10 +236,14 @@ void SmallControlsAndMaskRenderCorrectly() {
                     // The former Save button area is no longer interactive.
                     CHECK(HitTest(POINT{ScaleValue(180, scale, dpi), ScaleValue(613, scale, dpi)}, m)
                           == HotElement::None);
-                    CHECK(HitTest(center(kLunchDurationBox), m) == HotElement::LunchDurationField);
-                    CHECK(FieldIndexOf(HotElement::LunchDurationField) == 3);
-                    CHECK(HitTest(POINT{ScaleValue(300, scale, dpi), ScaleValue(470, scale, dpi)}, m)
-                          == HotElement::LunchDurationField);
+                    CHECK(HitTest(center(kLunchStartBox), m) == HotElement::LunchStartField);
+                    CHECK(FieldIndexOf(HotElement::LunchStartField) == 3);
+                    CHECK(HitTest(center(kLunchEndBox), m) == HotElement::LunchEndField);
+                    CHECK(FieldIndexOf(HotElement::LunchEndField) == 4);
+                    CHECK(HitTest(POINT{ScaleValue(300, scale, dpi), ScaleValue(503, scale, dpi)}, m)
+                          == HotElement::None); // Removed lunch checkbox.
+                    CHECK(HitTest(POINT{ScaleValue(100, scale, dpi), ScaleValue(470, scale, dpi)}, m)
+                          == HotElement::LunchStartField);
                 }
                 CHECK(HitTest(center(kUpdateButton), m) == HotElement::None);
                 m.updateAvailable = true;
@@ -360,8 +390,6 @@ void OcrSilentlyUpdatesAndSavesTime() {
 
     g.settings = Settings{};
     g.settings.endInputMode = EndInputMode::WorkDuration;
-    g.settings.lunchDurationMinutes = 90;
-    g.settings.deductLunch = true;
     PopulateFields();
     CompleteOcr({{}, 535, {}});
     CHECK(g.settings.startMinutes == 535 && g.settings.endMinutes == 1075);
@@ -395,74 +423,63 @@ int main() {
     g.settingsPath = settingsPath.wstring();
     SettingsApplyOnFocusLoss();
     InvalidEditsRevertWithoutChangingSavedSettings();
+    OvernightLunchCanBeEnteredAsAPair();
     g.settings = Settings{};
     PopulateFields();
-    CHECK(g.fields[3].text.empty());
-    CHECK(!IsCharAllowed(L':', FilterFor(3)));
+    CHECK(g.fields[3].text == L"12:00" && g.fields[4].text == L"13:30");
+    CHECK(IsCharAllowed(L':', FilterFor(3)) && IsCharAllowed(L':', FilterFor(4)));
     CHECK(!IsCharAllowed(L'.', FilterFor(3)));
-    CHECK(IsCharAllowed(L'6', FilterFor(3)));
+    CHECK(MaxLengthFor(3) == 5 && MaxLengthFor(4) == 5);
     Settings parsed;
     CHECK(ReadFieldSettings(parsed));
-    CHECK(parsed.lunchDurationMinutes == 0 && !parsed.deductLunch);
-    ToggleDeductLunch();
-    CHECK(!g.editDeductLunch && g.footerIsError);
-    g.fields[3] = MakeField(L"60");
-    ToggleDeductLunch();
-    CHECK(g.editDeductLunch && !g.footerIsError);
-    CHECK(ReadFieldSettings(parsed));
-    CHECK(parsed.lunchDurationMinutes == 60 && parsed.deductLunch);
     SetEndInputMode(EndInputMode::WorkDuration);
-    CHECK(g.fields[1].text == L"9"); // Full 09:00 to 18:00 span, including lunch.
+    CHECK(g.fields[1].text == L"9");
     g.fields[1] = MakeField(L"8.5");
-    CHECK(ReadFieldSettings(parsed));
-    CHECK(parsed.endMinutes == 1050); // 17:30, including lunch.
+    CHECK(ReadFieldSettings(parsed) && parsed.endMinutes == 1050);
     SetEndInputMode(EndInputMode::EndTime);
     CHECK(g.fields[1].text == L"17:30");
-    g.settings = parsed;
-    PopulateFields();
-    CHECK(g.fields[1].text == L"8.5" && g.fields[3].text == L"60");
-    CHECK(g.editDeductLunch);
-    ToggleDeductLunch();
-    CHECK(ReadFieldSettings(parsed));
-    CHECK(parsed.endMinutes == 1050); // 17:30 without lunch deduction.
-    ToggleDeductLunch();
-    CHECK(ReadFieldSettings(parsed));
-    CHECK(parsed.endMinutes == 1050); // Enabling deduction must not extend the shift.
-    g.editDeductLunch = true;
-    for (const auto text : {L"", L"0"}) {
-        g.fields[3] = MakeField(text);
-        CHECK(ReadFieldSettings(parsed));
-        CHECK(parsed.lunchDurationMinutes == 0 && !parsed.deductLunch);
-        CHECK(parsed.endMinutes == 1050);
-    }
-    for (const auto text : {L"12:00", L"60.5", L"-1", L"1440", L"abc", L"60x", L"999999999999999999"}) {
-        g.fields[3] = MakeField(text);
-        CHECK(!ReadFieldSettings(parsed));
-    }
-    g.fields[3] = MakeField(L"510");
-    CHECK(!ReadFieldSettings(parsed)); // Lunch cannot consume the whole 8.5h span.
-    g.fields[3] = MakeField(L"509");
-    CHECK(ReadFieldSettings(parsed));
-    CHECK(parsed.endMinutes == 1050); // Still 17:30, with one effective minute.
-    g.editEndInputMode = EndInputMode::EndTime;
-    g.fields[1] = MakeField(L"10:00");
-    g.fields[3] = MakeField(L"60");
-    CHECK(!ReadFieldSettings(parsed)); // No effective work remains.
-    g.fields[0] = MakeField(L"22:00");
-    g.fields[1] = MakeField(L"8");
-    g.editEndInputMode = EndInputMode::WorkDuration;
-    CHECK(ReadFieldSettings(parsed));
-    CHECK(parsed.endMinutes == 360); // 06:00 next day, including lunch.
-    g.expanded = true;
+    // Valid complete lunch edits persist immediately, keeping focus/caret.
     g.focusedField = 3;
+    g.fields[3] = MakeField(L"11:45");
+    ApplyLiveLunchChange();
+    CHECK(g.focusedField == 3 && g.fields[3].caret == 5);
+    CHECK(g.settings.lunchStartMinutes == 705);
+    CHECK(LoadSettings(g.settingsPath).lunchStartMinutes == 705);
+    g.fields[4] = MakeField(L"13:0");
+    ApplyLiveLunchChange();
+    CHECK(g.settings.lunchEndMinutes == 810); // Partial edit never persists.
+    g.fields[4] = MakeField(L"13:00");
+    ApplyLiveLunchChange();
+    CHECK(g.settings.lunchEndMinutes == 780 && g.settings.endMinutes == 1050);
+    CHECK(LoadSettings(g.settingsPath).lunchEndMinutes == 780);
+    // An invalid complete edit never changes persisted state.
+    g.fields[4] = MakeField(L"11:30");
+    ApplyLiveLunchChange();
+    CHECK(g.settings.lunchEndMinutes == 780);
+    CHECK(LoadSettings(g.settingsPath).lunchEndMinutes == 780);
+    PopulateFields();
+    g.expanded = true;
+    g.focusedField = 4;
     FocusNextField(1);
     CHECK(g.focusedField == 0);
     FocusNextField(-1);
-    CHECK(g.focusedField == 3);
+    CHECK(g.focusedField == 4);
     g.expanded = false;
     g.focusedField = -1;
+    // Legacy zero durations remain editable: clear and then restore lunch.
+    g.fields[3] = MakeField(L"");
+    g.fields[4] = MakeField(L"");
+    ApplyFieldChange(3);
+    CHECK(g.settings.lunchStartMinutes == -1 && g.settings.lunchEndMinutes == -1);
+    CHECK(g.fields[3].text.empty() && g.fields[4].text.empty());
+    CHECK(LoadSettings(g.settingsPath).lunchStartMinutes == -1);
+    g.fields[3] = MakeField(L"12:00");
+    g.fields[4] = MakeField(L"13:00");
+    ApplyFieldChange(4);
+    CHECK(g.settings.lunchStartMinutes == 720 && g.settings.lunchEndMinutes == 780);
+    CHECK(g.fields[3].text == L"12:00");
     OcrSilentlyUpdatesAndSavesTime();
-    LunchOnlyChangesTheOffWorkCountdown();
+    LunchFreezesCountdownAndEarningsOnScreen();
     DropTargetRendersOnTheLayeredSurface();
     AllMoneyOutsideEditorIsMasked();
     SmallControlsAndMaskRenderCorrectly();

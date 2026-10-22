@@ -193,44 +193,32 @@ void FiveMinuteStartupResetAndStaleAreSilent() {
     CHECK(!d.notifyFiveMinutes);
 }
 
-void FiveMinuteReminderUsesActualEndWithLunchDuration() {
+void FiveMinuteReminderUsesActualEndDuringLunch() {
     for (const int start : {540, 1320}) {
-        const int end = offwork::EndMinutesWithLunch(start, 480, 60, true);
-        for (const int lunch : {0, 60, 90}) {
-            for (const bool deduct : {false, true}) {
-                // Start before the shortened display crosses five minutes and
-                // observe every second through zero display and the REAL end.
-                const int initialRemaining = lunch * 60 + 301;
-                const auto snapshotAt = [&](int remaining) {
-                    const int now = (end * 60 - remaining + kDay) % kDay;
-                    return CalculateWorkday(now, start, end, 800, lunch, deduct);
-                };
-                auto snapshot = snapshotAt(initialRemaining);
-                auto state = ResetReminder(snapshot.phase, snapshot.remainingSeconds);
-                int fiveMinuteNotifications = 0;
-                int endNotifications = 0;
-                for (int remaining = initialRemaining - 1; remaining >= -1; --remaining) {
-                    snapshot = snapshotAt(remaining);
-                    const int now = (end * 60 - remaining + kDay) % kDay;
-                    const auto d = TickReminder(state, snapshot.phase,
-                        SecondsSinceShiftEnd(now, end), snapshot.remainingSeconds);
-                    CHECK(d.notifyFiveMinutes == (remaining == 300));
-                    CHECK(d.notify == (remaining == 0));
-                    if (remaining == 300) {
-                        CHECK(snapshot.remainingSeconds == 300);
-                        CHECK(snapshot.countdownSeconds == (deduct && lunch > 0 ? 0 : 300));
-                    }
-                    fiveMinuteNotifications += d.notifyFiveMinutes ? 1 : 0;
-                    endNotifications += d.notify ? 1 : 0;
-                    state = d.next;
-                }
-                CHECK(fiveMinuteNotifications == 1);
-                CHECK(endNotifications == 1);
+        const int end = offwork::EndMinutesFromDuration(start, 480);
+        // Include a lunch which overlaps the five-minute reminder window.
+        for (const int lunchOffset : {180, 470}) {
+            const int lunchStart = (start + lunchOffset) % 1440;
+            const int lunchEnd = (start + (lunchOffset == 180 ? 270 : 480)) % 1440;
+            auto snapshot = CalculateWorkday(start * 60, start, end, 800, lunchStart, lunchEnd);
+            auto state = ResetReminder(snapshot.phase, snapshot.remainingSeconds);
+            int fiveMinuteNotifications = 0;
+            int endNotifications = 0;
+            for (int elapsed = 1; elapsed <= 480 * 60 + 1; ++elapsed) {
+                const int now = (start * 60 + elapsed) % kDay;
+                snapshot = CalculateWorkday(now, start, end, 800, lunchStart, lunchEnd);
+                const auto d = TickReminder(state, snapshot.phase,
+                    SecondsSinceShiftEnd(now, end), snapshot.remainingSeconds);
+                CHECK(d.notifyFiveMinutes == (elapsed == 475 * 60));
+                CHECK(d.notify == (elapsed == 480 * 60));
+                if (elapsed == 475 * 60 && lunchOffset == 470) CHECK(snapshot.onLunch);
+                fiveMinuteNotifications += d.notifyFiveMinutes ? 1 : 0;
+                endNotifications += d.notify ? 1 : 0;
+                state = d.next;
             }
+            CHECK(fiveMinuteNotifications == 1 && endNotifications == 1);
         }
     }
-    CHECK(offwork::EndMinutesWithLunch(540, 480, 60, true) == 1020);
-    CHECK(offwork::EndMinutesWithLunch(1320, 480, 60, true) == 360);
 }
 
 }  // namespace
@@ -238,7 +226,7 @@ void FiveMinuteReminderUsesActualEndWithLunchDuration() {
 int main() {
     FiveMinuteReminderTransitions();
     FiveMinuteStartupResetAndStaleAreSilent();
-    FiveMinuteReminderUsesActualEndWithLunchDuration();
+    FiveMinuteReminderUsesActualEndDuringLunch();
     SecondsSinceShiftEndWrapsAroundMidnight();
     TransitionNotifiesExactlyOnce();
     RepeatedAfterWorkTicksNeverRepeat();

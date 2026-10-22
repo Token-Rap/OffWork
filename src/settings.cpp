@@ -19,8 +19,8 @@ namespace {
 constexpr int kMinutesPerDay = 24 * 60;
 constexpr double kMaxDailySalary = 1000000.0;
 
-// Returns presence separately from validity: an empty/invalid new key must not
-// resurrect a legacy interval. Strict parsing also rejects truncated numbers.
+// Returns presence separately from validity: an empty/invalid interval key must
+// not resurrect a legacy duration. Strict parsing also rejects truncated numbers.
 bool ReadMinuteSetting(const std::wstring& path, const wchar_t* key, int& minutes) {
     wchar_t text[64] = {};
     const DWORD length = GetPrivateProfileStringW(
@@ -70,13 +70,12 @@ Settings NormalizeSettings(const Settings& settings) {
         normalized.endMinutes = 18 * 60;
     }
 
-    if (settings.lunchDurationMinutes < 0 || settings.lunchDurationMinutes >= kMinutesPerDay) {
-        normalized.lunchDurationMinutes = 0;
-    }
-    if (normalized.lunchDurationMinutes == 0 ||
-        normalized.lunchDurationMinutes >=
-            WorkDurationMinutes(normalized.startMinutes, normalized.endMinutes)) {
-        normalized.deductLunch = false;
+    try {
+        (void)LunchDurationMinutes(normalized.startMinutes, normalized.endMinutes,
+            normalized.lunchStartMinutes, normalized.lunchEndMinutes);
+    } catch (const std::invalid_argument&) {
+        normalized.lunchStartMinutes = -1;
+        normalized.lunchEndMinutes = -1;
     }
     return normalized;
 }
@@ -108,16 +107,21 @@ Settings LoadSettings(const std::wstring& path) {
     settings.opacityPercent = static_cast<int>(GetPrivateProfileIntW(
         L"window", L"opacityPercent", settings.opacityPercent, path.c_str()));
 
-    if (!ReadMinuteSetting(path, L"lunchDurationMinutes", settings.lunchDurationMinutes)) {
-        int lunchStart = -1;
-        int lunchEnd = -1;
-        ReadMinuteSetting(path, L"lunchStartMinutes", lunchStart);
-        ReadMinuteSetting(path, L"lunchEndMinutes", lunchEnd);
-        if (lunchStart >= 0 && lunchEnd >= 0 && lunchStart != lunchEnd) {
-            settings.lunchDurationMinutes = WorkDurationMinutes(lunchStart, lunchEnd);
+    int lunchStart = -1;
+    int lunchEnd = -1;
+    const bool hasStart = ReadMinuteSetting(path, L"lunchStartMinutes", lunchStart);
+    const bool hasEnd = ReadMinuteSetting(path, L"lunchEndMinutes", lunchEnd);
+    if (hasStart || hasEnd) {
+        settings.lunchStartMinutes = lunchStart;
+        settings.lunchEndMinutes = lunchEnd;
+    } else {
+        int legacyDuration = 0;
+        if (ReadMinuteSetting(path, L"lunchDurationMinutes", legacyDuration)) {
+            settings.lunchStartMinutes = legacyDuration > 0 ? 12 * 60 : -1;
+            settings.lunchEndMinutes = legacyDuration > 0
+                ? (12 * 60 + legacyDuration) % kMinutesPerDay : -1;
         }
     }
-    settings.deductLunch = GetPrivateProfileIntW(L"work", L"deductLunch", 0, path.c_str()) == 1;
 
     wchar_t inputMode[32] = {};
     GetPrivateProfileStringW(
@@ -155,11 +159,12 @@ void SaveSettings(const std::wstring& path, const Settings& settings) {
             ? L"duration"
             : L"endTime",
         path.c_str());
-    swprintf_s(value, L"%d", normalized.lunchDurationMinutes);
-    WritePrivateProfileStringW(L"work", L"lunchDurationMinutes", value, path.c_str());
-    WritePrivateProfileStringW(L"work", L"lunchStartMinutes", nullptr, path.c_str());
-    WritePrivateProfileStringW(L"work", L"lunchEndMinutes", nullptr, path.c_str());
-    WritePrivateProfileStringW(L"work", L"deductLunch", normalized.deductLunch ? L"1" : L"0", path.c_str());
+    swprintf_s(value, L"%d", normalized.lunchStartMinutes);
+    WritePrivateProfileStringW(L"work", L"lunchStartMinutes", value, path.c_str());
+    swprintf_s(value, L"%d", normalized.lunchEndMinutes);
+    WritePrivateProfileStringW(L"work", L"lunchEndMinutes", value, path.c_str());
+    WritePrivateProfileStringW(L"work", L"lunchDurationMinutes", nullptr, path.c_str());
+    WritePrivateProfileStringW(L"work", L"deductLunch", nullptr, path.c_str());
     swprintf_s(value, L"%.2f", normalized.dailySalary);
     WritePrivateProfileStringW(L"work", L"dailySalary", value, path.c_str());
     swprintf_s(value, L"%d", normalized.uiScalePercent);

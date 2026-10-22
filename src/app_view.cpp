@@ -37,8 +37,8 @@ RenderModel BuildModel() {
     model.startField = g.fields[0];
     model.endField = g.fields[1];
     model.salaryField = g.fields[2];
-    model.lunchDurationField = g.fields[3];
-    model.editDeductLunch = g.editDeductLunch;
+    model.lunchStartField = g.fields[3];
+    model.lunchEndField = g.fields[4];
     model.focusedField = g.expanded ? g.focusedField : -1;
     model.caretVisible = g.caretVisible;
     model.footerText = g.footerText;
@@ -97,7 +97,13 @@ void SetFocusedField(int index) {
     if (g.focusedField == index) {
         return;
     }
-    ApplyFieldChange(g.focusedField);
+    // Treat lunch as one interval: keep the first endpoint draft while the
+    // user moves to the second, including when enabling an overnight lunch.
+    if (g.focusedField >= 3 && index >= 3) {
+        ApplyLiveLunchChange();
+    } else {
+        ApplyFieldChange(g.focusedField);
+    }
     g.focusedField = index;
     g.caretVisible = index >= 0;
     if (index >= 0) {

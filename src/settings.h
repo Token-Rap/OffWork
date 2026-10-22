@@ -15,8 +15,8 @@ enum class EndInputMode {
 struct Settings {
     int startMinutes = 9 * 60;
     int endMinutes = 18 * 60;
-    int lunchDurationMinutes = 0; // 0 means no lunch; otherwise 1..1439 minutes
-    bool deductLunch = false;
+    int lunchStartMinutes = 12 * 60; // Both -1 means no lunch (legacy duration 0).
+    int lunchEndMinutes = 13 * 60 + 30;
     double dailySalary = 500.0;
     int uiScalePercent = 100;
     int opacityPercent = 100;

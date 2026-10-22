@@ -17,7 +17,6 @@ namespace offwork {
 // -- small helpers ----------------------------------------------------------
 
 FieldFilter FilterFor(int fieldIndex) {
-    if (fieldIndex == 3) return FieldFilter::Integer;
     return fieldIndex == 2 ||
             (fieldIndex == 1 && g.editEndInputMode == EndInputMode::WorkDuration)
         ? FieldFilter::Decimal
@@ -25,7 +24,7 @@ FieldFilter FilterFor(int fieldIndex) {
 }
 
 std::size_t MaxLengthFor(int fieldIndex) {
-    return fieldIndex == 2 ? kSalaryMaxLength : fieldIndex == 3 ? kLunchMaxLength : kTimeMaxLength;
+    return fieldIndex == 2 ? kSalaryMaxLength : kTimeMaxLength;
 }
 
 std::wstring FormatTimeValue(int minutes) {
@@ -80,7 +79,6 @@ bool ParseDurationText(const std::wstring& text, int& durationMinutes) {
 
 void PopulateFields() {
     g.editEndInputMode = g.settings.endInputMode;
-    g.editDeductLunch = g.settings.deductLunch;
     g.fields[0] = MakeField(FormatTimeValue(g.settings.startMinutes));
     g.fields[1] = MakeField(
         g.editEndInputMode == EndInputMode::WorkDuration
@@ -88,8 +86,8 @@ void PopulateFields() {
                   WorkDurationMinutes(g.settings.startMinutes, g.settings.endMinutes))
             : FormatTimeValue(g.settings.endMinutes));
     g.fields[2] = MakeField(FormatSalaryValue(g.settings.dailySalary));
-    g.fields[3] = MakeField(g.settings.lunchDurationMinutes == 0
-        ? L"" : std::to_wstring(g.settings.lunchDurationMinutes));
+    g.fields[3] = MakeField(g.settings.lunchStartMinutes < 0 ? L"" : FormatTimeValue(g.settings.lunchStartMinutes));
+    g.fields[4] = MakeField(g.settings.lunchEndMinutes < 0 ? L"" : FormatTimeValue(g.settings.lunchEndMinutes));
 }
 
 bool ParseTimeText(const std::wstring& text, int& minutes) {
@@ -125,7 +123,7 @@ bool ParseSalaryText(const std::wstring& text, double& salary) {
 bool ValidWorkSettings(const Settings& settings) {
     try {
         (void)EffectiveWorkMinutes(settings.startMinutes, settings.endMinutes,
-            settings.lunchDurationMinutes, settings.deductLunch);
+            settings.lunchStartMinutes, settings.lunchEndMinutes);
         return true;
     } catch (const std::invalid_argument&) {
         return false;
@@ -139,14 +137,13 @@ FieldState SettingsField(int index) {
             ? FormatDurationHours(WorkDurationMinutes(g.settings.startMinutes, g.settings.endMinutes))
             : FormatTimeValue(g.settings.endMinutes));
         case 2: return MakeField(FormatSalaryValue(g.settings.dailySalary));
-        default: return MakeField(g.settings.lunchDurationMinutes == 0
-            ? L"" : std::to_wstring(g.settings.lunchDurationMinutes));
+        case 3: return MakeField(g.settings.lunchStartMinutes < 0 ? L"" : FormatTimeValue(g.settings.lunchStartMinutes));
+        default: return MakeField(g.settings.lunchEndMinutes < 0 ? L"" : FormatTimeValue(g.settings.lunchEndMinutes));
     }
 }
 
 void PersistLiveSettings(const Settings& settings) {
     g.settings = settings;
-    g.editDeductLunch = settings.deductLunch;
     g.editEndInputMode = settings.endInputMode;
     SaveSettings(g.settingsPath, g.settings);
     // An edit can put now past the end time; it must not fire a shift reminder.
@@ -156,10 +153,24 @@ void PersistLiveSettings(const Settings& settings) {
 
 }  // namespace
 
+bool ParseLunchTime(const std::wstring& text, int& minutes) {
+    return text.size() == 5 && text[2] == L':' && ParseTimeText(text, minutes);
+}
+
 bool ReadLunchField(Settings& settings) {
-    if (!ParseMinuteDurationText(g.fields[3].text, settings.lunchDurationMinutes)) return false;
-    settings.deductLunch = g.editDeductLunch && settings.lunchDurationMinutes > 0;
-    return true;
+    if (g.fields[3].text.empty() && g.fields[4].text.empty()) {
+        settings.lunchStartMinutes = settings.lunchEndMinutes = -1;
+        return true;
+    }
+    return ParseLunchTime(g.fields[3].text, settings.lunchStartMinutes) &&
+        ParseLunchTime(g.fields[4].text, settings.lunchEndMinutes);
+}
+
+void ApplyLiveLunchChange() {
+    Settings draft = g.settings;
+    if (!ReadLunchField(draft) || !ValidWorkSettings(draft)) return;
+    if (draft.lunchStartMinutes != g.settings.lunchStartMinutes ||
+        draft.lunchEndMinutes != g.settings.lunchEndMinutes) PersistLiveSettings(draft);
 }
 
 bool ReadFieldSettings(Settings& settings) {
@@ -176,8 +187,7 @@ bool ReadFieldSettings(Settings& settings) {
             return false;
         }
         try {
-            settings.endMinutes = EndMinutesWithLunch(settings.startMinutes, durationMinutes,
-                settings.lunchDurationMinutes, settings.deductLunch);
+            settings.endMinutes = EndMinutesFromDuration(settings.startMinutes, durationMinutes);
         } catch (const std::invalid_argument&) { return false; }
     } else if (!ParseTimeText(g.fields[1].text, settings.endMinutes) ||
                settings.startMinutes == settings.endMinutes) {
@@ -232,7 +242,9 @@ void WriteClipboardText(HWND owner, const std::wstring& text) {
 
 void ApplyFieldChange(int index) {
     if (index < 0 || index >= kFieldCount) return;
-    if (g.fields[index].text == SettingsField(index).text) return;
+    const int otherLunchField = index == 3 ? 4 : 3;
+    if (g.fields[index].text == SettingsField(index).text &&
+        (index < 3 || g.fields[otherLunchField].text == SettingsField(otherLunchField).text)) return;
     Settings draft = g.settings;
     const auto& text = g.fields[index].text;
     bool valid = false;
@@ -257,14 +269,17 @@ void ApplyFieldChange(int index) {
             valid = ParseSalaryText(text, draft.dailySalary);
             break;
         case 3:
-            valid = ParseMinuteDurationText(text, draft.lunchDurationMinutes);
-            if (valid && draft.lunchDurationMinutes == 0) draft.deductLunch = false;
+        case 4:
+            valid = ReadLunchField(draft);
             break;
     }
     if (valid && ValidWorkSettings(draft)) {
         PersistLiveSettings(draft);
+    } else {
+        SetFooter(kValidationFooter, true);
     }
     g.fields[index] = SettingsField(index);
+    if (index >= 3) g.fields[otherLunchField] = SettingsField(otherLunchField);
     if (index == 0 && g.settings.endInputMode == EndInputMode::WorkDuration)
         g.fields[1] = SettingsField(1);
     Present();
@@ -289,21 +304,6 @@ void TogglePinned() {
     SetWindowPos(
         g.window, g.pinned ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-    Present();
-}
-
-void ToggleDeductLunch() {
-    Settings draft;
-    if (!ReadFieldSettings(draft) || draft.lunchDurationMinutes == 0) {
-        SetFooter(L"请先填写有效的午休时长(分钟)", true);
-    } else {
-        draft.deductLunch = !g.editDeductLunch;
-        if (ValidWorkSettings(draft)) {
-            PersistLiveSettings(draft);
-        } else {
-            SetFooter(kValidationFooter, true);
-        }
-    }
     Present();
 }
 
@@ -347,14 +347,13 @@ void PollScreenshotOcr() {
         try {
             if (updated.endInputMode == EndInputMode::WorkDuration) {
                 const int duration = WorkDurationMinutes(updated.startMinutes, updated.endMinutes);
-                updated.endMinutes = EndMinutesWithLunch(*result.minutes, duration,
-                    updated.lunchDurationMinutes, updated.deductLunch);
+                updated.endMinutes = EndMinutesFromDuration(*result.minutes, duration);
             }
             updated.startMinutes = *result.minutes;
             if (NormalizeSettings(updated).startMinutes != updated.startMinutes ||
                 updated.startMinutes == updated.endMinutes) throw std::invalid_argument("schedule");
             (void)EffectiveWorkMinutes(updated.startMinutes, updated.endMinutes,
-                updated.lunchDurationMinutes, updated.deductLunch);
+                updated.lunchStartMinutes, updated.lunchEndMinutes);
             g.settings = updated;
             SaveSettings(g.settingsPath, g.settings);
             PopulateFields();
@@ -450,6 +449,7 @@ bool HandleFieldKey(WPARAM key) {
     if (g.footerIsError) {
         ResetFooter();
     }
+    if (index >= 3) ApplyLiveLunchChange();
     g.caretVisible = true;
     SetTimer(g.window, kCaretTimer, kCaretBlinkMs, nullptr);
     Present();

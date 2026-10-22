@@ -33,9 +33,6 @@ std::wstring SelectedText(const FieldState& state);
 
 bool IsCharAllowed(wchar_t character, FieldFilter filter);
 
-// Whole minutes in [0, 1439]; an empty optional duration means zero.
-bool ParseMinuteDurationText(std::wstring_view text, int& minutes);
-
 FieldState MoveCaretTo(const FieldState& state, std::size_t position, bool extend);
 FieldState MoveCaret(const FieldState& state, int delta, bool extend);
 FieldState MoveToStart(const FieldState& state, bool extend);
