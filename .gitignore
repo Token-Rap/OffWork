@@ -8,3 +8,4 @@ artifacts/
 *.user
 *.suo
 .vs/
+.wrangler/
