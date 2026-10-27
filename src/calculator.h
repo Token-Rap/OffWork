@@ -19,6 +19,8 @@ struct WorkdaySnapshot {
     double earned;
     double progress;
     bool onLunch = false;
+    // Display only; reminders always use remainingSeconds.
+    int countdownSeconds = 0;
 };
 
 inline int WorkDurationMinutes(int startMinutes, int endMinutes) {
@@ -71,12 +73,23 @@ inline int EffectiveWorkMinutes(int start, int end, int lunchStart, int lunchEnd
     return WorkDurationMinutes(start, end) - LunchDurationMinutes(start, end, lunchStart, lunchEnd);
 }
 
+inline int EndMinutesFromNetDuration(int start, int netDuration, int lunchStart, int lunchEnd) {
+    if (netDuration <= 0 || netDuration >= 1440)
+        throw std::invalid_argument("net work duration");
+    const int lunch = lunchStart == -1 && lunchEnd == -1
+        ? 0 : WorkDurationMinutes(lunchStart, lunchEnd);
+    const int end = EndMinutesFromDuration(start, netDuration + lunch);
+    // The chosen lunch interval must still fit inside the resulting shift.
+    (void)EffectiveWorkMinutes(start, end, lunchStart, lunchEnd);
+    return end;
+}
+
 inline WorkdaySnapshot CalculateWorkday(
     int nowSeconds,
     int startMinutes,
     int endMinutes,
     double dailySalary,
-    int lunchStart = -1, int lunchEnd = -1) {
+    int lunchStart = -1, int lunchEnd = -1, bool deductLunch = false) {
     constexpr int secondsPerDay = 24 * 60 * 60;
 
     if (nowSeconds < 0 || nowSeconds >= secondsPerDay) {
@@ -130,7 +143,10 @@ inline WorkdaySnapshot CalculateWorkday(
         static_cast<double>(elapsed - lunchElapsed) /
             static_cast<double>(duration - lunchDuration), 0.0, 1.0);
     const double earned = dailySalary * progress;
-    return {phase, remaining, earned, progress, onLunch};
+    const int lunchAhead = lunchDuration - lunchElapsed;
+    const int countdown = deductLunch && phase == WorkdayPhase::Working
+        ? std::max(0, remaining - lunchAhead) : remaining;
+    return {phase, remaining, earned, progress, onLunch, countdown};
 }
 
 }  // namespace offwork

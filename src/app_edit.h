@@ -31,6 +31,7 @@ void BeginScreenshotOcr(const std::wstring& path);
 void PollScreenshotOcr();
 void ToggleAutostart();
 void TogglePinned();
+void ToggleDeductLunch();
 void SetEndInputMode(EndInputMode mode);
 
 void FocusNextField(int direction);

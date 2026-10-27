@@ -460,6 +460,9 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 case HotElement::Autostart:
                     ToggleAutostart();
                     break;
+                case HotElement::DeductLunch:
+                    ToggleDeductLunch();
+                    break;
                 case HotElement::EndTimeMode:
                     SetEndInputMode(EndInputMode::EndTime);
                     break;

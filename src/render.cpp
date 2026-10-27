@@ -518,6 +518,7 @@ HotElement HitTest(POINT point, const RenderModel& model) {
     }
     if (Contains(ToRect(kLunchStartBox, scale, dpi), point)) return HotElement::LunchStartField;
     if (Contains(ToRect(kLunchEndBox, scale, dpi), point)) return HotElement::LunchEndField;
+    if (Contains(ToRect(kDeductLunchHit, scale, dpi), point)) return HotElement::DeductLunch;
     if (Contains(ToRect(kEndTimeModeButton, scale, dpi), point)) {
         return HotElement::EndTimeMode;
     }
@@ -603,7 +604,8 @@ void RenderFrame(HDC dc, const RenderModel& model) {
         snapshot = offwork::CalculateWorkday(
             std::clamp(nowSeconds, 0, 24 * 60 * 60 - 1),
             model.settings.startMinutes, model.settings.endMinutes,
-            model.settings.dailySalary, model.settings.lunchStartMinutes, model.settings.lunchEndMinutes);
+            model.settings.dailySalary, model.settings.lunchStartMinutes, model.settings.lunchEndMinutes,
+            model.settings.deductLunch);
     } catch (...) {
         // NormalizeSettings makes this unreachable; a painted frame must never
         // be the thing that takes the process down.
@@ -624,9 +626,9 @@ void RenderFrame(HDC dc, const RenderModel& model) {
         wchar_t duration[32] = {};
         swprintf_s(
             duration, L"%02d:%02d:%02d",
-            snapshot.remainingSeconds / 3600,
-            (snapshot.remainingSeconds % 3600) / 60,
-            snapshot.remainingSeconds % 60);
+            snapshot.countdownSeconds / 3600,
+            (snapshot.countdownSeconds % 3600) / 60,
+            snapshot.countdownSeconds % 60);
         countdown = duration;
     }
 
@@ -709,6 +711,10 @@ void RenderFrame(HDC dc, const RenderModel& model) {
                    model.fonts->label, kTextPrimary);
     DrawField(dc, model, 3);
     DrawField(dc, model, 4);
+
+    DrawTextInRect(dc, L"距离下班时间扣除午休", ToRect(kDeductLunchLabel, scale, dpi),
+                   model.fonts->tiny, kTextPrimary);
+    DrawToggle(dc, model, kDeductLunchToggle, HotElement::DeductLunch, model.settings.deductLunch);
 
     wchar_t opacityLabel[32] = {};
     swprintf_s(opacityLabel, L"不透明度 %d%%", model.settings.opacityPercent);

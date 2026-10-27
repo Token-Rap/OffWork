@@ -97,6 +97,7 @@ std::wstring SettingsFilePath() {
 
 Settings LoadSettings(const std::wstring& path) {
     Settings settings;
+    settings.deductLunch = GetPrivateProfileIntW(L"work", L"deductLunch", 0, path.c_str()) == 1;
     settings.hideEarned = GetPrivateProfileIntW(L"window", L"hideEarned", 0, path.c_str()) == 1;
     settings.startMinutes = GetPrivateProfileIntW(
         L"work", L"startMinutes", settings.startMinutes, path.c_str());
@@ -164,7 +165,7 @@ void SaveSettings(const std::wstring& path, const Settings& settings) {
     swprintf_s(value, L"%d", normalized.lunchEndMinutes);
     WritePrivateProfileStringW(L"work", L"lunchEndMinutes", value, path.c_str());
     WritePrivateProfileStringW(L"work", L"lunchDurationMinutes", nullptr, path.c_str());
-    WritePrivateProfileStringW(L"work", L"deductLunch", nullptr, path.c_str());
+    WritePrivateProfileStringW(L"work", L"deductLunch", normalized.deductLunch ? L"1" : L"0", path.c_str());
     swprintf_s(value, L"%.2f", normalized.dailySalary);
     WritePrivateProfileStringW(L"work", L"dailySalary", value, path.c_str());
     swprintf_s(value, L"%d", normalized.uiScalePercent);

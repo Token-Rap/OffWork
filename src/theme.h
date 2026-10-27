@@ -92,6 +92,9 @@ inline constexpr LogicalRect kLunchStartLabel{37, 433, 175, 453};
 inline constexpr LogicalRect kLunchStartBox{37, 454, 175, 486};
 inline constexpr LogicalRect kLunchEndLabel{191, 433, 323, 453};
 inline constexpr LogicalRect kLunchEndBox{191, 454, 323, 486};
+inline constexpr LogicalRect kDeductLunchLabel{37, 492, 275, 514};
+inline constexpr LogicalRect kDeductLunchToggle{279, 492, 323, 514};
+inline constexpr LogicalRect kDeductLunchHit{37, 488, 323, 518};
 inline constexpr LogicalRect kOpacityLabel{37, 520, 323, 539};
 inline constexpr LogicalRect kOpacityTrack{50, 546, 310, 552};
 inline constexpr LogicalRect kOpacityHit{37, 536, 323, 564};
@@ -116,6 +119,7 @@ enum class HotElement {
     SalaryField,
     LunchStartField,
     LunchEndField,
+    DeductLunch,
     EndTimeMode,
     DurationMode,
     Opacity,

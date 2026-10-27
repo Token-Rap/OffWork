@@ -21,6 +21,7 @@ struct Settings {
     int uiScalePercent = 100;
     int opacityPercent = 100;
     bool hideEarned = false;
+    bool deductLunch = false; // Display only; earnings always exclude lunch.
     EndInputMode endInputMode = EndInputMode::WorkDuration;
 };
 

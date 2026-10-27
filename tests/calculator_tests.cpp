@@ -6,6 +6,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <utility>
+#include <tuple>
 
 namespace {
 
@@ -21,6 +22,40 @@ int main() {
     using offwork::EndMinutesFromDuration;
     using offwork::WorkDurationMinutes;
     using offwork::WorkdayPhase;
+    using offwork::EndMinutesFromNetDuration;
+
+    CHECK(EndMinutesFromNetDuration(540, 480, 720, 780) == 1080);
+    CHECK(EndMinutesFromNetDuration(535, 480, 720, 780) == 1075);
+    CHECK(EndMinutesFromNetDuration(540, 480, -1, -1) == 1020);
+    CHECK(EndMinutesFromNetDuration(1320, 420, 1410, 30) == 360);
+    CHECK(EndMinutesFromNetDuration(1320, 480, 1410, 30) == 420);
+    for (const auto [net, lunchStart, lunchEnd] : {
+        std::tuple{0, 720, 780}, {1380, 720, 780}, {1439, 720, 780},
+        {60, 720, 780}, {480, -1, 780}, {480, 720, 720}}) {
+        bool invalid = false;
+        try { (void)EndMinutesFromNetDuration(540, net, lunchStart, lunchEnd); }
+        catch (const std::invalid_argument&) { invalid = true; }
+        CHECK(invalid);
+    }
+
+    // Display changes never change the real deadline, earnings or progress.
+    for (const auto [now, wall, display] : {
+        std::tuple{8 * 3600, 3600, 3600},
+        {9 * 3600, 32400, 28800}, {11 * 3600, 25200, 21600},
+        {12 * 3600, 21600, 18000}, {12 * 3600 + 1800, 19800, 18000},
+        {13 * 3600, 18000, 18000}, {17 * 3600 + 55 * 60, 300, 300},
+        {18 * 3600, 0, 0}}) {
+        const auto off = CalculateWorkday(now, 540, 1080, 800, 720, 780);
+        const auto on = CalculateWorkday(now, 540, 1080, 800, 720, 780, true);
+        CHECK(off.remainingSeconds == wall && on.remainingSeconds == wall);
+        CHECK(off.countdownSeconds == wall && on.countdownSeconds == display);
+        CHECK(Near(off.earned, on.earned) && Near(off.progress, on.progress));
+        CHECK(off.onLunch == on.onLunch);
+    }
+    CHECK(CalculateWorkday(10 * 3600, 540, 1080, 800, -1, -1, true).countdownSeconds == 28800);
+    CHECK(CalculateWorkday(23 * 3600, 1320, 360, 700, 1410, 30, true).countdownSeconds == 21600);
+    CHECK(CalculateWorkday(0, 1320, 360, 700, 1410, 30, true).countdownSeconds == 19800);
+    CHECK(CalculateWorkday(3600, 1320, 360, 700, 1410, 30, true).countdownSeconds == 18000);
 
     CHECK(EndMinutesFromDuration(9 * 60, 8 * 60) == 17 * 60);
     CHECK(EndMinutesFromDuration(9 * 60, 9 * 60) == 18 * 60);

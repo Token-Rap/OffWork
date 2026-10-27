@@ -13,6 +13,59 @@
 
 namespace {
 
+void NetDurationRecalculatesEnd() {
+    using namespace offwork;
+    g.settings = Settings{};
+    g.settings.lunchEndMinutes = 780;
+    g.focusedField = -1;
+    PopulateFields();
+    CHECK(g.settings.endMinutes == 1080); // Loading the editor never migrates end.
+    CHECK(g.fields[1].text == L"8");
+    g.fields[1] = MakeField(L"8.5");
+    ApplyLiveEndChange();
+    CHECK(g.settings.endMinutes == 1110);
+    g.fields[0] = MakeField(L"08:55");
+    ApplyFieldChange(0);
+    CHECK(g.settings.endMinutes == 1105);
+    g.fields[4] = MakeField(L"13:30");
+    ApplyLiveLunchChange();
+    CHECK(g.settings.endMinutes == 1135);
+    CHECK(g.fields[1].text == L"8.5");
+    CHECK(LoadSettings(g.settingsPath).endMinutes == 1135);
+    // Blur-only lunch edits also preserve net hours, including removing lunch.
+    g.fields[4] = MakeField(L"13:00");
+    ApplyFieldChange(4);
+    CHECK(g.settings.endMinutes == 1105 && g.fields[1].text == L"8.5");
+    g.fields[3] = MakeField(L"");
+    g.fields[4] = MakeField(L"");
+    ApplyFieldChange(3);
+    CHECK(g.settings.endMinutes == 1045);
+    g.fields[3] = MakeField(L"12:00");
+    g.fields[4] = MakeField(L"13:00");
+    ApplyFieldChange(4);
+    CHECK(g.settings.endMinutes == 1105);
+    // Reject a >=24-hour wall span without throwing or overwriting saved data.
+    g.fields[1] = MakeField(L"23");
+    ApplyLiveEndChange();
+    CHECK(g.settings.endMinutes == 1105);
+    ApplyFieldChange(1);
+    CHECK(g.fields[1].text == L"8.5" && g.settings.endMinutes == 1105);
+    g.fields[0] = MakeField(L"13:00"); // Lunch is now outside the shift.
+    ApplyFieldChange(0);
+    CHECK(g.settings.startMinutes == 535 && g.settings.endMinutes == 1105);
+    SetEndInputMode(EndInputMode::EndTime);
+    CHECK(g.fields[1].text == L"18:25");
+    SetEndInputMode(EndInputMode::WorkDuration);
+    CHECK(g.fields[1].text == L"8.5" && g.settings.endMinutes == 1105);
+    // Formatting to two decimal hours still round-trips a single net minute.
+    g.settings.lunchStartMinutes = g.settings.lunchEndMinutes = -1;
+    g.settings.endMinutes = 536;
+    PopulateFields();
+    Settings draft;
+    CHECK(g.fields[1].text == L"0.02" && ReadFieldSettings(draft));
+    CHECK(draft.endMinutes == 536);
+}
+
 void SettingsApplyOnFocusLoss() {
     using namespace offwork;
     g.settings = Settings{};
@@ -47,8 +100,8 @@ void SettingsApplyOnFocusLoss() {
     CHECK(BuildModel().settings.lunchEndMinutes == 780);
     SetEndInputMode(EndInputMode::WorkDuration);
     edit(1, L"8.5");
-    CHECK(g.settings.endMinutes == 1020);
-    CHECK(LoadSettings(g.settingsPath).endMinutes == 1020);
+    CHECK(g.settings.endMinutes == 1110);
+    CHECK(LoadSettings(g.settingsPath).endMinutes == 1110);
     CHECK(g.settings.hideEarned && LoadSettings(g.settingsPath).hideEarned);
     // Closing the panel also applies the final edit.
     SetFocusedField(4);
@@ -88,7 +141,7 @@ void InvalidEditsRevertWithoutChangingSavedSettings() {
         SetFocusedField(1);
         g.fields[1] = MakeField(text);
         SetFocusedField(-1);
-        CHECK(g.fields[1].text == L"9");
+        CHECK(g.fields[1].text == L"7.5");
         CHECK(g.settings.endMinutes == 1080 && LoadSettings(g.settingsPath).endMinutes == 1080);
     }
     g.expanded = false;
@@ -100,6 +153,7 @@ void OvernightLunchCanBeEnteredAsAPair() {
         g.settings = Settings{};
         g.settings.startMinutes = 1320;
         g.settings.endMinutes = 360;
+        g.settings.endInputMode = EndInputMode::EndTime;
         g.settings.lunchStartMinutes = g.settings.lunchEndMinutes = -1;
         g.focusedField = -1;
         PopulateFields();
@@ -247,7 +301,7 @@ void SmallControlsAndMaskRenderCorrectly() {
                     CHECK(HitTest(center(kLunchEndBox), m) == HotElement::LunchEndField);
                     CHECK(FieldIndexOf(HotElement::LunchEndField) == 4);
                     CHECK(HitTest(POINT{ScaleValue(300, scale, dpi), ScaleValue(503, scale, dpi)}, m)
-                          == HotElement::None); // Removed lunch checkbox.
+                          == HotElement::DeductLunch); // Restored optional display toggle.
                     CHECK(HitTest(POINT{ScaleValue(100, scale, dpi), ScaleValue(470, scale, dpi)}, m)
                           == HotElement::LunchStartField);
                 }
@@ -381,6 +435,97 @@ void CompleteOcr(offwork::OcrResult result) {
     CHECK(!offwork::g.ocrTask.valid());
 }
 
+void OptionalLunchCountdownRendersOnlyBeforeLunchEnds() {
+    using namespace offwork;
+    for (const int scale : {75, 100, 150}) {
+        for (const UINT dpi : {96u, 144u, 192u}) {
+            RenderModel model;
+            model.expanded = true;
+            model.settings.hideEarned = true;
+            model.salaryField = MakeField(L"****");
+            model.settings.uiScalePercent = scale;
+            model.dpi = dpi;
+            auto fonts = CreateFonts(scale, dpi);
+            model.fonts = &fonts;
+            const auto size = WindowSizeFor(scale, dpi, true);
+            LayeredSurface off, on;
+            CHECK(off.EnsureSize(size.cx, size.cy) && on.EnsureSize(size.cx, size.cy));
+            for (const int hour : {8, 11, 12, 13, 14, 18}) {
+                model.now.wHour = static_cast<WORD>(hour);
+                model.settings.deductLunch = false;
+                RenderFrame(off.dc(), model);
+                model.settings.deductLunch = true;
+                RenderFrame(on.dc(), model);
+                CHECK(SamePixels(off.dc(), on.dc(), ScaleRect(kCountdownText, scale, dpi)) == (hour != 11));
+                for (const auto rect : {kEarnedAmount, kProgressText, kProgressTrackRect})
+                    CHECK(SamePixels(off.dc(), on.dc(), ScaleRect(rect, scale, dpi)));
+                CHECK(!SamePixels(off.dc(), on.dc(), ScaleRect(kDeductLunchToggle, scale, dpi)));
+            }
+            // The restored label fits the historical row at every supported scale/DPI.
+            RECT label = ScaleRect(kDeductLunchLabel, scale, dpi);
+            RECT measured = label;
+            const auto oldFont = SelectObject(on.dc(), fonts.tiny);
+            CHECK(DrawTextW(on.dc(), L"距离下班时间扣除午休", -1, &measured,
+                DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX) > 0);
+            CHECK(measured.right - measured.left <= label.right - label.left);
+            CHECK(measured.bottom - measured.top <= label.bottom - label.top);
+            SelectObject(on.dc(), oldFont);
+            // Check the actual rendered label too, including encoding corruption.
+            const auto brush = CreateSolidBrush(kPanelBackground);
+            FillRect(off.dc(), &label, brush);
+            DeleteObject(brush);
+            const auto expectedFont = SelectObject(off.dc(), fonts.tiny);
+            SetBkMode(off.dc(), TRANSPARENT);
+            SetTextColor(off.dc(), kTextPrimary);
+            RECT expectedLabel = label;
+            DrawTextW(off.dc(), L"距离下班时间扣除午休", -1, &expectedLabel,
+                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            SelectObject(off.dc(), expectedFont);
+            CHECK(SamePixels(off.dc(), on.dc(), label));
+            DestroyFonts(fonts);
+        }
+    }
+}
+
+void DurationOcrPreservesNetHours() {
+    using namespace offwork;
+    g.settings = Settings{};
+    g.settings.lunchEndMinutes = 780;
+    PopulateFields();
+    CompleteOcr({{}, 535, {}});
+    CHECK(g.settings.endMinutes == 1075 && g.fields[1].text == L"8");
+    CHECK(LoadSettings(g.settingsPath).endMinutes == 1075);
+    g.settings.startMinutes = 1320;
+    g.settings.endMinutes = 360;
+    g.settings.lunchStartMinutes = 1410;
+    g.settings.lunchEndMinutes = 30;
+    PopulateFields();
+    CHECK(g.fields[1].text == L"7");
+    CompleteOcr({{}, 1315, {}});
+    CHECK(g.settings.endMinutes == 355 && g.fields[1].text == L"7");
+    CHECK(LoadSettings(g.settingsPath).endMinutes == 355);
+    g.fields[4] = MakeField(L"01:00");
+    ApplyLiveLunchChange();
+    CHECK(g.settings.endMinutes == 385 && g.fields[1].text == L"7");
+}
+
+void DisplayToggleSavesWithoutChangingScheduleOrReminder() {
+    using namespace offwork;
+    g.settings = Settings{};
+    PopulateFields();
+    g.reminder = ResetReminder(WorkdayPhase::Working, 301);
+    ToggleDeductLunch();
+    CHECK(g.settings.deductLunch && LoadSettings(g.settingsPath).deductLunch);
+    CHECK(BuildModel().settings.deductLunch);
+    CHECK(g.settings.endMinutes == 1080 && g.fields[1].text == L"7.5");
+    CHECK(g.reminder.lastRemainingSeconds == 301 && !g.reminder.fiveMinutesHandled);
+    // Display-only settings must not suppress the next real 5-minute reminder.
+    CHECK(TickReminder(g.reminder, WorkdayPhase::Working, 0, 300).notifyFiveMinutes);
+    ToggleDeductLunch();
+    CHECK(!g.settings.deductLunch && !LoadSettings(g.settingsPath).deductLunch);
+    CHECK(g.reminder.lastRemainingSeconds == 301);
+}
+
 void OcrSilentlyUpdatesAndSavesTime() {
     using namespace offwork;
     const auto path = std::filesystem::temp_directory_path() /
@@ -398,10 +543,10 @@ void OcrSilentlyUpdatesAndSavesTime() {
     g.settings = Settings{};
     CHECK(g.settings.endInputMode == EndInputMode::WorkDuration);
     PopulateFields();
-    CHECK(g.editEndInputMode == EndInputMode::WorkDuration && g.fields[1].text == L"9");
+    CHECK(g.editEndInputMode == EndInputMode::WorkDuration && g.fields[1].text == L"7.5");
     CompleteOcr({{}, 535, {}});
     CHECK(g.settings.startMinutes == 535 && g.settings.endMinutes == 1075);
-    CHECK(g.fields[1].text == L"9");
+    CHECK(g.fields[1].text == L"7.5");
     CHECK(LoadSettings(g.settingsPath).endMinutes == 1075);
 
     g.expanded = false;
@@ -451,7 +596,7 @@ void ScreenshotOcrFillsTheUi(const std::wstring& image) {
             CHECK(model.startField.text == L"08:55");
             CHECK(model.settings.startMinutes == 535 && saved.startMinutes == 535);
             CHECK(model.settings.endMinutes == end && saved.endMinutes == end);
-            CHECK(model.endField.text == (mode == EndInputMode::EndTime ? L"18:50" : L"9.97"));
+            CHECK(model.endField.text == (mode == EndInputMode::EndTime ? L"18:50" : L"8.97"));
             CHECK(g.expanded == expanded && g.focusedField == -1);
             CHECK(!model.footerIsError);
             const auto snapshot = CalculateWorkday(10 * 3600, model.settings.startMinutes,
@@ -620,18 +765,18 @@ void EndTimeEditsApplyBeforeOcrRepopulatesFields() {
     SetFocusedField(1);
     g.fields[1] = MakeField(L"8.5");
     CHECK(HandleFieldKey(VK_END));
-    CHECK(g.settings.endMinutes == 1042 && LoadSettings(g.settingsPath).endMinutes == 1042);
+    CHECK(g.settings.endMinutes == 1132 && LoadSettings(g.settingsPath).endMinutes == 1132);
     CHECK(g.fields[1].text == L"8.5" && g.fields[1].caret == 3);
     CompleteOcr({{}, 535, {}});
-    CHECK(g.settings.endMinutes == 1045 && g.fields[1].text == L"8.5");
-    CHECK(BuildModel().settings.endMinutes == 1045);
-    CHECK(LoadSettings(g.settingsPath).endMinutes == 1045);
+    CHECK(g.settings.endMinutes == 1135 && g.fields[1].text == L"8.5");
+    CHECK(BuildModel().settings.endMinutes == 1135);
+    CHECK(LoadSettings(g.settingsPath).endMinutes == 1135);
 
     SetFocusedField(1);
     CHECK(HandleFieldKey(VK_BACK)); // 8. is incomplete; preserve 8.5 hours.
-    CHECK(g.fields[1].text == L"8." && g.settings.endMinutes == 1045);
+    CHECK(g.fields[1].text == L"8." && g.settings.endMinutes == 1135);
     CHECK(HandleFieldKey(VK_BACK)); // 8 is complete and valid.
-    CHECK(g.settings.endMinutes == 1015 && LoadSettings(g.settingsPath).endMinutes == 1015);
+    CHECK(g.settings.endMinutes == 1105 && LoadSettings(g.settingsPath).endMinutes == 1105);
     SetFocusedField(-1);
 
     g.settings.startMinutes = 1320; // Overnight, no lunch.
@@ -685,6 +830,9 @@ int main(int argc, char** argv) {
         std::cout << "All OCR/end-time editor tests passed.\n";
         return 0;
     }
+    NetDurationRecalculatesEnd();
+    DurationOcrPreservesNetHours();
+    DisplayToggleSavesWithoutChangingScheduleOrReminder();
     EndTimeEditsApplyBeforeOcrRepopulatesFields();
     SettingsApplyOnFocusLoss();
     InvalidEditsRevertWithoutChangingSavedSettings();
@@ -698,11 +846,11 @@ int main(int argc, char** argv) {
     Settings parsed;
     CHECK(ReadFieldSettings(parsed));
     SetEndInputMode(EndInputMode::WorkDuration);
-    CHECK(g.fields[1].text == L"9");
+    CHECK(g.fields[1].text == L"7.5");
     g.fields[1] = MakeField(L"8.5");
-    CHECK(ReadFieldSettings(parsed) && parsed.endMinutes == 1050);
+    CHECK(ReadFieldSettings(parsed) && parsed.endMinutes == 1140);
     SetEndInputMode(EndInputMode::EndTime);
-    CHECK(g.fields[1].text == L"17:30");
+    CHECK(g.fields[1].text == L"19:00");
     // Valid complete lunch edits persist immediately, keeping focus/caret.
     g.focusedField = 3;
     g.fields[3] = MakeField(L"11:45");
@@ -715,7 +863,7 @@ int main(int argc, char** argv) {
     CHECK(g.settings.lunchEndMinutes == 810); // Partial edit never persists.
     g.fields[4] = MakeField(L"13:00");
     ApplyLiveLunchChange();
-    CHECK(g.settings.lunchEndMinutes == 780 && g.settings.endMinutes == 1050);
+    CHECK(g.settings.lunchEndMinutes == 780 && g.settings.endMinutes == 1140);
     CHECK(LoadSettings(g.settingsPath).lunchEndMinutes == 780);
     // An invalid complete edit never changes persisted state.
     g.fields[4] = MakeField(L"11:30");
@@ -745,6 +893,7 @@ int main(int argc, char** argv) {
     CHECK(g.fields[3].text == L"12:00");
     OcrSilentlyUpdatesAndSavesTime();
     LunchFreezesCountdownAndEarningsOnScreen();
+    OptionalLunchCountdownRendersOnlyBeforeLunchEnds();
     DropTargetRendersOnTheLayeredSurface();
     AllMoneyOutsideEditorIsMasked();
     SmallControlsAndMaskRenderCorrectly();

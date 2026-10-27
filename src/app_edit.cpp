@@ -14,6 +14,23 @@
 
 namespace offwork {
 
+namespace {
+int NetDuration(const Settings& settings) {
+    return EffectiveWorkMinutes(settings.startMinutes, settings.endMinutes,
+        settings.lunchStartMinutes, settings.lunchEndMinutes);
+}
+
+bool SetNetDuration(Settings& settings, int minutes) {
+    try {
+        settings.endMinutes = EndMinutesFromNetDuration(settings.startMinutes, minutes,
+            settings.lunchStartMinutes, settings.lunchEndMinutes);
+        return true;
+    } catch (const std::invalid_argument&) {
+        return false;
+    }
+}
+}  // namespace
+
 // -- small helpers ----------------------------------------------------------
 
 FieldFilter FilterFor(int fieldIndex) {
@@ -83,7 +100,7 @@ void PopulateFields() {
     g.fields[1] = MakeField(
         g.editEndInputMode == EndInputMode::WorkDuration
             ? FormatDurationHours(
-                  WorkDurationMinutes(g.settings.startMinutes, g.settings.endMinutes))
+                  NetDuration(g.settings))
             : FormatTimeValue(g.settings.endMinutes));
     g.fields[2] = MakeField(FormatSalaryValue(g.settings.dailySalary));
     g.fields[3] = MakeField(g.settings.lunchStartMinutes < 0 ? L"" : FormatTimeValue(g.settings.lunchStartMinutes));
@@ -134,7 +151,7 @@ FieldState SettingsField(int index) {
     switch (index) {
         case 0: return MakeField(FormatTimeValue(g.settings.startMinutes));
         case 1: return MakeField(g.settings.endInputMode == EndInputMode::WorkDuration
-            ? FormatDurationHours(WorkDurationMinutes(g.settings.startMinutes, g.settings.endMinutes))
+            ? FormatDurationHours(NetDuration(g.settings))
             : FormatTimeValue(g.settings.endMinutes));
         case 2: return MakeField(FormatSalaryValue(g.settings.dailySalary));
         case 3: return MakeField(g.settings.lunchStartMinutes < 0 ? L"" : FormatTimeValue(g.settings.lunchStartMinutes));
@@ -168,7 +185,10 @@ bool ReadLunchField(Settings& settings) {
 
 void ApplyLiveLunchChange() {
     Settings draft = g.settings;
-    if (!ReadLunchField(draft) || !ValidWorkSettings(draft)) return;
+    if (!ReadLunchField(draft)) return;
+    if (draft.endInputMode == EndInputMode::WorkDuration &&
+        !SetNetDuration(draft, NetDuration(g.settings))) return;
+    if (!ValidWorkSettings(draft)) return;
     if (draft.lunchStartMinutes != g.settings.lunchStartMinutes ||
         draft.lunchEndMinutes != g.settings.lunchEndMinutes) PersistLiveSettings(draft);
 }
@@ -179,7 +199,7 @@ void ApplyLiveEndChange() {
     if (draft.endInputMode == EndInputMode::WorkDuration) {
         int duration = 0;
         if (text.empty() || text.back() == L'.' || !ParseDurationText(text, duration)) return;
-        draft.endMinutes = EndMinutesFromDuration(draft.startMinutes, duration);
+        if (!SetNetDuration(draft, duration)) return;
     } else if (!ParseTimeText(text, draft.endMinutes) || text.size() - text.find(L':') != 3) {
         return; // Keep incomplete input editable without changing the schedule.
     }
@@ -200,9 +220,7 @@ bool ReadFieldSettings(Settings& settings) {
         if (!ParseDurationText(g.fields[1].text, durationMinutes)) {
             return false;
         }
-        try {
-            settings.endMinutes = EndMinutesFromDuration(settings.startMinutes, durationMinutes);
-        } catch (const std::invalid_argument&) { return false; }
+        if (!SetNetDuration(settings, durationMinutes)) return false;
     } else if (!ParseTimeText(g.fields[1].text, settings.endMinutes) ||
                settings.startMinutes == settings.endMinutes) {
         return false;
@@ -266,15 +284,14 @@ void ApplyFieldChange(int index) {
         case 0:
             valid = ParseTimeText(text, draft.startMinutes);
             if (valid && draft.endInputMode == EndInputMode::WorkDuration) {
-                draft.endMinutes = EndMinutesFromDuration(draft.startMinutes,
-                    WorkDurationMinutes(g.settings.startMinutes, g.settings.endMinutes));
+                valid = SetNetDuration(draft, NetDuration(g.settings));
             }
             break;
         case 1:
             if (draft.endInputMode == EndInputMode::WorkDuration) {
                 int duration = 0;
                 valid = ParseDurationText(text, duration);
-                if (valid) draft.endMinutes = EndMinutesFromDuration(draft.startMinutes, duration);
+                if (valid) valid = SetNetDuration(draft, duration);
             } else {
                 valid = ParseTimeText(text, draft.endMinutes);
             }
@@ -285,6 +302,8 @@ void ApplyFieldChange(int index) {
         case 3:
         case 4:
             valid = ReadLunchField(draft);
+            if (valid && draft.endInputMode == EndInputMode::WorkDuration)
+                valid = SetNetDuration(draft, NetDuration(g.settings));
             break;
     }
     if (valid && ValidWorkSettings(draft)) {
@@ -321,6 +340,13 @@ void TogglePinned() {
     Present();
 }
 
+void ToggleDeductLunch() {
+    g.settings.deductLunch = !g.settings.deductLunch;
+    SaveSettings(g.settingsPath, g.settings);
+    ResetFooter();
+    Present();
+}
+
 void SetEndInputMode(EndInputMode mode) {
     if (g.editEndInputMode == mode) return;
     Settings draft;
@@ -330,7 +356,7 @@ void SetEndInputMode(EndInputMode mode) {
         return;
     }
     g.fields[1] = MakeField(mode == EndInputMode::WorkDuration
-        ? FormatDurationHours(WorkDurationMinutes(draft.startMinutes, draft.endMinutes))
+        ? FormatDurationHours(NetDuration(draft))
         : FormatTimeValue(draft.endMinutes));
     draft.endInputMode = mode;
     PersistLiveSettings(draft);
@@ -371,8 +397,9 @@ void PollScreenshotOcr() {
         Settings updated = g.settings;
         try {
             if (updated.endInputMode == EndInputMode::WorkDuration) {
-                const int duration = WorkDurationMinutes(updated.startMinutes, updated.endMinutes);
-                updated.endMinutes = EndMinutesFromDuration(*result.minutes, duration);
+                const int duration = NetDuration(updated);
+                updated.endMinutes = EndMinutesFromNetDuration(*result.minutes, duration,
+                    updated.lunchStartMinutes, updated.lunchEndMinutes);
             }
             updated.startMinutes = *result.minutes;
             if (NormalizeSettings(updated).startMinutes != updated.startMinutes ||
