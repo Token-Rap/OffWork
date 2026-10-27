@@ -716,9 +716,10 @@ void RenderFrame(HDC dc, const RenderModel& model) {
     DrawToggle(dc, model, kAutostartToggle, HotElement::Autostart, model.autostartEnabled);
 
     DrawTextInRect(
-        dc, model.footerText, ToRect(kFooterText, scale, dpi), model.fonts->tiny,
+        dc, model.footerText,
+        ToRect(model.footerIsError ? kFooterErrorText : kFooterText, scale, dpi), model.fonts->tiny,
         model.footerIsError ? kDanger : kTextMuted,
-        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        DT_CENTER | DT_NOPREFIX | (model.footerIsError ? DT_WORDBREAK : DT_VCENTER | DT_SINGLELINE));
 }
 
 }  // namespace offwork

@@ -117,6 +117,9 @@ if(WIN32)
     advapi32 gdi32 msimg32 ole32 shell32 user32 winhttp)
   add_test(NAME app_edit COMMAND OffWorkAppEditTests)
   set_tests_properties(app_edit PROPERTIES TIMEOUT 15)
+  add_test(NAME app_ocr_fill COMMAND OffWorkAppEditTests --ocr-fill
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/dingtalk_clockin.png")
+  set_tests_properties(app_ocr_fill PROPERTIES TIMEOUT 60)
 
   enable_language(RC)
   # offwork.rc is UTF-8. rc.exe otherwise reads it in the system ANSI codepage,

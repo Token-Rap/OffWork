@@ -339,15 +339,26 @@ void SetEndInputMode(EndInputMode mode) {
     Present();
 }
 
+namespace {
+void ShowScreenshotOcrError(const std::wstring& message) {
+    // Windows may suppress subtle tray balloons (quiet time / notifications
+    // disabled). Keep the actionable reason visible in the widget as well.
+    SetExpanded(true);
+    SetFooter(message, true);
+    g.trayIcon.ShowBalloon(L"截图识别", message.c_str(), true);
+    Present();
+}
+}  // namespace
+
 void BeginScreenshotOcr(const std::wstring& path) {
     if (g.ocrTask.valid()) {
-        g.trayIcon.ShowBalloon(L"截图识别", L"正在识别，请稍后重试。", true);
+        ShowScreenshotOcrError(L"正在识别，请稍后重试。");
         return;
     }
     try {
         g.ocrTask = std::async(std::launch::async, [path] { return RecognizeScreenshot(path); });
     } catch (...) {
-        g.trayIcon.ShowBalloon(L"截图识别", L"无法开始识别，请重试。", true);
+        ShowScreenshotOcrError(L"无法开始识别，请重试。");
     }
 }
 
@@ -377,11 +388,11 @@ void PollScreenshotOcr() {
             Present();
             return; // Success is silent: only the updated time is feedback.
         } catch (const std::invalid_argument&) {
-            g.trayIcon.ShowBalloon(L"截图识别", L"时间与排班冲突，请调整设置。", true);
+            ShowScreenshotOcrError(L"时间与排班冲突，请调整设置。");
             return;
         }
     }
-    g.trayIcon.ShowBalloon(L"截图识别", L"识别失败，请重试清晰截图。", true);
+    ShowScreenshotOcrError(result.error.empty() ? L"识别失败，请重试清晰截图。" : result.error);
 }
 
 // -- keyboard ---------------------------------------------------------------

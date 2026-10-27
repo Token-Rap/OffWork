@@ -7,6 +7,9 @@
 #include <future>
 #include <iostream>
 #include <stdexcept>
+#include <chrono>
+#include <thread>
+#include "version.h"
 
 namespace {
 
@@ -397,22 +400,130 @@ void OcrSilentlyUpdatesAndSavesTime() {
     CHECK(g.fields[1].text == L"9");
     CHECK(LoadSettings(g.settingsPath).endMinutes == 1075);
 
-    g.footerText = L"unchanged";
+    g.expanded = false;
     CompleteOcr({{}, {}, L"unrecognized screenshot"});
     CHECK(g.settings.startMinutes == 535);
-    CHECK(g.footerText == L"unchanged" && !g.footerIsError);
+    CHECK(g.expanded && g.footerIsError);
+    CHECK(BuildModel().footerText == L"unrecognized screenshot");
     CHECK(LoadSettings(g.settingsPath).startMinutes == 535);
 
     g.settings.endInputMode = EndInputMode::EndTime;
     CompleteOcr({{}, g.settings.endMinutes, {}}); // Conflicting schedule.
-    CHECK(g.settings.startMinutes == 535 && g.footerText == L"unchanged");
+    CHECK(g.settings.startMinutes == 535 && g.footerIsError);
+    CHECK(g.footerText.find(L"排班冲突") != std::wstring::npos);
     std::promise<OcrResult> failed;
     g.ocrTask = failed.get_future();
     failed.set_exception(std::make_exception_ptr(std::runtime_error("OCR worker")));
     PollScreenshotOcr();
     CHECK(!g.ocrTask.valid() && g.settings.startMinutes == 535);
-    CHECK(g.footerText == L"unchanged");
+    CHECK(g.footerIsError && g.footerText.find(L"识别失败") != std::wstring::npos);
     std::filesystem::remove(path);
+}
+
+// Real Windows OCR, async completion and presentation data: no injected result.
+void ScreenshotOcrFillsTheUi(const std::wstring& image) {
+    using namespace offwork;
+    for (const bool expanded : {false, true}) {
+        for (const auto mode : {EndInputMode::EndTime, EndInputMode::WorkDuration}) {
+            g.settings = Settings{};
+            g.settings.startMinutes = 532; // User's 08:52 / 18:50 schedule.
+            g.settings.endMinutes = 1130;
+            g.settings.lunchStartMinutes = 720;
+            g.settings.lunchEndMinutes = 780;
+            g.settings.endInputMode = mode;
+            g.expanded = expanded;
+            g.focusedField = -1;
+            PopulateFields();
+            BeginScreenshotOcr(image);
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+            while (g.ocrTask.valid() && std::chrono::steady_clock::now() < deadline) {
+                PollScreenshotOcr();
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            CHECK(!g.ocrTask.valid());
+            const auto model = BuildModel();
+            const auto saved = LoadSettings(g.settingsPath);
+            const int end = mode == EndInputMode::EndTime ? 1130 : 1133;
+            CHECK(model.startField.text == L"08:55");
+            CHECK(model.settings.startMinutes == 535 && saved.startMinutes == 535);
+            CHECK(model.settings.endMinutes == end && saved.endMinutes == end);
+            CHECK(model.endField.text == (mode == EndInputMode::EndTime ? L"18:50" : L"9.97"));
+            CHECK(g.expanded == expanded && g.focusedField == -1);
+            CHECK(!model.footerIsError);
+            const auto snapshot = CalculateWorkday(10 * 3600, model.settings.startMinutes,
+                model.settings.endMinutes, model.settings.dailySalary, 720, 780);
+            CHECK(snapshot.remainingSeconds == (mode == EndInputMode::EndTime ? 31800 : 31980));
+        }
+    }
+    // A missing language pack, a rejected image and parse errors retain their
+    // actionable reason even when the shell cannot display a tray balloon.
+    for (const auto* reason : {L"Windows 未安装可用的文字识别语言，请在系统语言设置中安装简体中文 OCR。",
+                              L"截图尺寸过大，请裁剪打卡结果后重试。",
+                              L"未找到有效的上班打卡时间，请拖入包含打卡成功时间的清晰截图。"}) {
+        g.expanded = false;
+        CompleteOcr({{}, {}, reason});
+        CHECK(g.expanded && BuildModel().footerIsError);
+        CHECK(BuildModel().footerText == reason);
+        CHECK(g.settings.startMinutes == 535 && LoadSettings(g.settingsPath).startMinutes == 535);
+    }
+    CompleteOcr({{}, {}, {}});
+    CHECK(g.footerIsError && !g.footerText.empty());
+    std::promise<OcrResult> pending;
+    g.ocrTask = pending.get_future();
+    BeginScreenshotOcr(image);
+    CHECK(g.footerIsError && g.footerText.find(L"正在识别") != std::wstring::npos);
+    pending.set_value({{}, 535, {}});
+    PollScreenshotOcr();
+    CHECK(!g.footerIsError);
+
+    // Version comes from CMake and returns after a transient footer message.
+    CHECK(BuildModel().footerText.find(OFFWORK_VERSION_W) != std::wstring::npos);
+    SetFooter(L"temporary hint", true);
+    CHECK(BuildModel().footerText == L"temporary hint");
+    ResetFooter();
+    CHECK(BuildModel().footerText.find(OFFWORK_VERSION_W) != std::wstring::npos);
+}
+
+void OcrErrorAndVersionFitInTheFooter() {
+    using namespace offwork;
+    const auto reason = L"无法识别截图，请确认文件可读取且图片完整，并在 Windows 语言设置中安装简体中文 OCR 后重试。";
+    for (const int scale : {75, 100, 150}) {
+        for (const UINT dpi : {96u, 144u, 192u}) {
+            RenderModel model;
+            model.expanded = true;
+            model.settings.hideEarned = true;
+            model.settings.uiScalePercent = scale;
+            model.dpi = dpi;
+            auto fonts = CreateFonts(scale, dpi);
+            model.fonts = &fonts;
+            const auto size = WindowSizeFor(scale, dpi, true);
+            LayeredSurface empty, rendered;
+            CHECK(empty.EnsureSize(size.cx, size.cy) && rendered.EnsureSize(size.cx, size.cy));
+            RenderFrame(empty.dc(), model);
+            const auto oldFont = SelectObject(rendered.dc(), fonts.tiny);
+            RECT measured = ScaleRect(kFooterText, scale, dpi);
+            CHECK(DrawTextW(rendered.dc(), kDefaultFooter, -1, &measured,
+                            DT_SINGLELINE | DT_NOPREFIX | DT_CALCRECT) > 0);
+            const auto normal = ScaleRect(kFooterText, scale, dpi);
+            CHECK(measured.right - measured.left <= normal.right - normal.left);
+            model.footerText = kDefaultFooter;
+            RenderFrame(rendered.dc(), model);
+            CHECK(!SamePixels(empty.dc(), rendered.dc(), normal));
+
+            measured = ScaleRect(kFooterErrorText, scale, dpi);
+            const int height = DrawTextW(rendered.dc(), reason, -1, &measured,
+                DT_WORDBREAK | DT_NOPREFIX | DT_CALCRECT);
+            const auto error = ScaleRect(kFooterErrorText, scale, dpi);
+            CHECK(height > normal.bottom - normal.top); // Needs multiple lines.
+            CHECK(height <= error.bottom - error.top);
+            model.footerText = reason;
+            model.footerIsError = true;
+            RenderFrame(rendered.dc(), model);
+            CHECK(!SamePixels(empty.dc(), rendered.dc(), error));
+            SelectObject(rendered.dc(), oldFont);
+            DestroyFonts(fonts);
+        }
+    }
 }
 
 void EndTimeEditsApplyBeforeOcrRepopulatesFields() {
@@ -507,6 +618,16 @@ int main(int argc, char** argv) {
     const auto settingsPath = std::filesystem::temp_directory_path() /
         (L"offwork-live-settings-" + std::to_wstring(GetCurrentProcessId()) + L".ini");
     g.settingsPath = settingsPath.wstring();
+    if (argc == 3 && std::string(argv[1]) == "--ocr-fill") {
+        EndTimeEditsApplyBeforeOcrRepopulatesFields();
+        OcrSilentlyUpdatesAndSavesTime();
+        g.settingsPath = settingsPath.wstring();
+        ScreenshotOcrFillsTheUi(std::filesystem::absolute(argv[2]).wstring());
+        OcrErrorAndVersionFitInTheFooter();
+        std::filesystem::remove(settingsPath);
+        std::cout << "All OCR fill and version UI tests passed.\n";
+        return 0;
+    }
     if (argc == 2 && std::string(argv[1]) == "--ocr-endtime") {
         EndTimeEditsApplyBeforeOcrRepopulatesFields();
         OcrSilentlyUpdatesAndSavesTime();

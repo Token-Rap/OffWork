@@ -98,6 +98,7 @@ inline constexpr LogicalRect kAutostartLabel{37, 568, 240, 590};
 inline constexpr LogicalRect kAutostartToggle{279, 568, 323, 590};
 inline constexpr LogicalRect kAutostartHit{37, 564, 323, 594};
 inline constexpr LogicalRect kFooterText{37, 630, 323, 644};
+inline constexpr LogicalRect kFooterErrorText{37, 603, 323, 650};
 
 // Horizontal padding between an input box edge and its text.
 inline constexpr int kInputPadding = 10;
