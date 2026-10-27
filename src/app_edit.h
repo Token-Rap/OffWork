@@ -23,8 +23,9 @@ bool ReadFieldSettings(Settings& settings);
 std::wstring ReadClipboardText(HWND owner);
 void WriteClipboardText(HWND owner, const std::wstring& text);
 
-// Commit on blur; lunch is committed/restored as a pair when leaving its editor.
+// Commit/revert on blur; complete end/lunch edits also save while focused.
 void ApplyFieldChange(int fieldIndex);
+void ApplyLiveEndChange();
 void ApplyLiveLunchChange();
 void BeginScreenshotOcr(const std::wstring& path);
 void PollScreenshotOcr();

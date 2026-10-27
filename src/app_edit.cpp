@@ -173,6 +173,20 @@ void ApplyLiveLunchChange() {
         draft.lunchEndMinutes != g.settings.lunchEndMinutes) PersistLiveSettings(draft);
 }
 
+void ApplyLiveEndChange() {
+    Settings draft = g.settings;
+    const auto& text = g.fields[1].text;
+    if (draft.endInputMode == EndInputMode::WorkDuration) {
+        int duration = 0;
+        if (text.empty() || text.back() == L'.' || !ParseDurationText(text, duration)) return;
+        draft.endMinutes = EndMinutesFromDuration(draft.startMinutes, duration);
+    } else if (!ParseTimeText(text, draft.endMinutes) || text.size() - text.find(L':') != 3) {
+        return; // Keep incomplete input editable without changing the schedule.
+    }
+    if (draft.endMinutes != g.settings.endMinutes && ValidWorkSettings(draft))
+        PersistLiveSettings(draft);
+}
+
 bool ReadFieldSettings(Settings& settings) {
     settings = g.settings;
     if (!ParseTimeText(g.fields[0].text, settings.startMinutes)) {
@@ -449,6 +463,7 @@ bool HandleFieldKey(WPARAM key) {
     if (g.footerIsError) {
         ResetFooter();
     }
+    if (index == 1) ApplyLiveEndChange();
     if (index >= 3) ApplyLiveLunchChange();
     g.caretVisible = true;
     SetTimer(g.window, kCaretTimer, kCaretBlinkMs, nullptr);

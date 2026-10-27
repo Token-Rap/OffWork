@@ -521,6 +521,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             if (g.footerIsError) {
                 ResetFooter();
             }
+            if (index == 1) ApplyLiveEndChange();
             if (index >= 3) ApplyLiveLunchChange();
             g.caretVisible = true;
             SetTimer(window, kCaretTimer, kCaretBlinkMs, nullptr);

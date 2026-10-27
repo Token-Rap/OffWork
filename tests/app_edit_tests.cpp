@@ -1,5 +1,6 @@
 #include "app_edit.h"
 #include "app_view.h"
+#include "calculator.h"
 #include "check.h"
 #include <filesystem>
 #include <cstdint>
@@ -414,13 +415,106 @@ void OcrSilentlyUpdatesAndSavesTime() {
     std::filesystem::remove(path);
 }
 
+void EndTimeEditsApplyBeforeOcrRepopulatesFields() {
+    using namespace offwork;
+    g.settings = Settings{};
+    g.settings.endMinutes = 1130; // Evidence: 18:50 in fixed-end mode.
+    g.expanded = true;
+    g.focusedField = -1;
+    PopulateFields();
+    SaveSettings(g.settingsPath, g.settings);
+    SetFocusedField(1);
+    g.fields[1] = InsertText(SelectAll(g.fields[1]), L"19:10", FilterFor(1), MaxLengthFor(1));
+    CHECK(HandleFieldKey(VK_END)); // Moving the caret must not require blur to save.
+    CHECK(g.focusedField == 1 && g.fields[1].caret == 5);
+    CHECK(g.settings.endMinutes == 1150);
+    CHECK(LoadSettings(g.settingsPath).endMinutes == 1150);
+    CHECK(BuildModel().settings.endMinutes == 1150);
+
+    CompleteOcr({L"上班打卡 08:52", 532, {}});
+    CHECK(g.settings.startMinutes == 532 && g.settings.endMinutes == 1150);
+    CHECK(g.fields[0].text == L"08:52" && BuildModel().endField.text == L"19:10");
+    CHECK(LoadSettings(g.settingsPath).endMinutes == 1150);
+    const auto snapshot = CalculateWorkday(13 * 3600 + 27 * 60 + 53,
+        g.settings.startMinutes, g.settings.endMinutes, 0,
+        g.settings.lunchStartMinutes, g.settings.lunchEndMinutes);
+    CHECK(snapshot.remainingSeconds == 20527); // 05:42:07, using the edited end.
+
+    SetFocusedField(1);
+    g.fields[1] = MakeField(L"18:5");
+    ApplyLiveEndChange();
+    CHECK(g.settings.endMinutes == 1150);
+    g.fields[1] = InsertText(g.fields[1], L"0", FilterFor(1), MaxLengthFor(1));
+    ApplyLiveEndChange(); // Same live-save path used by WM_CHAR.
+    CHECK(g.settings.endMinutes == 1130 && LoadSettings(g.settingsPath).endMinutes == 1130);
+    CHECK(g.focusedField == 1 && g.fields[1].caret == 5);
+    CHECK(HandleFieldKey(VK_BACK)); // Partial 18:5 must not change the saved end.
+    CHECK(g.fields[1].text == L"18:5" && g.settings.endMinutes == 1130);
+    for (const auto text : {L"08:52", L"10:00", L"25:00"}) { // Equal start, excludes lunch, invalid clock.
+        g.fields[1] = MakeField(text);
+        CHECK(HandleFieldKey(VK_END));
+        CHECK(g.settings.endMinutes == 1130 && LoadSettings(g.settingsPath).endMinutes == 1130);
+    }
+    SetFocusedField(-1);
+    CHECK(g.fields[1].text == L"18:50");
+
+    SetEndInputMode(EndInputMode::WorkDuration);
+    SetFocusedField(1);
+    g.fields[1] = MakeField(L"8.5");
+    CHECK(HandleFieldKey(VK_END));
+    CHECK(g.settings.endMinutes == 1042 && LoadSettings(g.settingsPath).endMinutes == 1042);
+    CHECK(g.fields[1].text == L"8.5" && g.fields[1].caret == 3);
+    CompleteOcr({{}, 535, {}});
+    CHECK(g.settings.endMinutes == 1045 && g.fields[1].text == L"8.5");
+    CHECK(BuildModel().settings.endMinutes == 1045);
+    CHECK(LoadSettings(g.settingsPath).endMinutes == 1045);
+
+    SetFocusedField(1);
+    CHECK(HandleFieldKey(VK_BACK)); // 8. is incomplete; preserve 8.5 hours.
+    CHECK(g.fields[1].text == L"8." && g.settings.endMinutes == 1045);
+    CHECK(HandleFieldKey(VK_BACK)); // 8 is complete and valid.
+    CHECK(g.settings.endMinutes == 1015 && LoadSettings(g.settingsPath).endMinutes == 1015);
+    SetFocusedField(-1);
+
+    g.settings.startMinutes = 1320; // Overnight, no lunch.
+    g.settings.endMinutes = 360;
+    g.settings.lunchStartMinutes = g.settings.lunchEndMinutes = -1;
+    PopulateFields();
+    SetFocusedField(1);
+    g.fields[1] = MakeField(L"9");
+    ApplyLiveEndChange();
+    CHECK(g.settings.endMinutes == 420);
+    CompleteOcr({{}, 1380, {}});
+    CHECK(g.settings.startMinutes == 1380 && g.settings.endMinutes == 480);
+    CHECK(g.fields[1].text == L"9" && LoadSettings(g.settingsPath).endMinutes == 480);
+
+    g.settings.startMinutes = 1320;
+    g.settings.endMinutes = 360;
+    g.settings.endInputMode = EndInputMode::EndTime;
+    PopulateFields();
+    SetFocusedField(1);
+    g.fields[1] = MakeField(L"7:30"); // Existing time parser accepts a single hour digit.
+    CHECK(HandleFieldKey(VK_END));
+    CHECK(g.settings.endMinutes == 450 && LoadSettings(g.settingsPath).endMinutes == 450);
+    CompleteOcr({{}, 1380, {}});
+    CHECK(g.settings.endMinutes == 450 && g.fields[1].text == L"07:30");
+}
+
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
     using namespace offwork;
     const auto settingsPath = std::filesystem::temp_directory_path() /
         (L"offwork-live-settings-" + std::to_wstring(GetCurrentProcessId()) + L".ini");
     g.settingsPath = settingsPath.wstring();
+    if (argc == 2 && std::string(argv[1]) == "--ocr-endtime") {
+        EndTimeEditsApplyBeforeOcrRepopulatesFields();
+        OcrSilentlyUpdatesAndSavesTime();
+        std::filesystem::remove(settingsPath);
+        std::cout << "All OCR/end-time editor tests passed.\n";
+        return 0;
+    }
+    EndTimeEditsApplyBeforeOcrRepopulatesFields();
     SettingsApplyOnFocusLoss();
     InvalidEditsRevertWithoutChangingSavedSettings();
     OvernightLunchCanBeEnteredAsAPair();
