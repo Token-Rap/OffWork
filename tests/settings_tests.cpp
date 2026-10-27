@@ -93,7 +93,11 @@ void NormalizeDoesNotTouchItsInput() {
 void InvalidEndInputModeFallsBackWithoutChangingValidModes() {
     Settings invalid;
     invalid.endInputMode = static_cast<EndInputMode>(99);
-    CHECK(NormalizeSettings(invalid).endInputMode == EndInputMode::EndTime);
+    CHECK(NormalizeSettings(invalid).endInputMode == EndInputMode::WorkDuration);
+
+    Settings fixed;
+    fixed.endInputMode = EndInputMode::EndTime;
+    CHECK(NormalizeSettings(fixed).endInputMode == EndInputMode::EndTime);
 
     Settings duration;
     duration.endInputMode = EndInputMode::WorkDuration;
@@ -118,12 +122,38 @@ void EndInputModeRoundTripsThroughTheIniFile() {
     CHECK(loaded.endMinutes == duration.endMinutes);
     CHECK(loaded.endInputMode == EndInputMode::WorkDuration);
 
+    duration.endInputMode = EndInputMode::EndTime;
+    offwork::SaveSettings(path.wstring(), duration);
+    CHECK(offwork::LoadSettings(path.wstring()).endInputMode == EndInputMode::EndTime);
+
     std::filesystem::remove(path, error);
+}
+
+void MissingOrInvalidEndModeDefaultsToDurationWithoutChangingTheSchedule() {
+    CHECK(Settings{}.endInputMode == EndInputMode::WorkDuration);
+    const auto path = std::filesystem::temp_directory_path() /
+        (L"offwork-mode-default-" + std::to_wstring(GetCurrentProcessId()) + L".ini");
+    std::filesystem::remove(path);
+    CHECK(offwork::LoadSettings(path.wstring()).endInputMode == EndInputMode::WorkDuration);
+    WritePrivateProfileStringW(L"work", L"startMinutes", L"532", path.c_str());
+    WritePrivateProfileStringW(L"work", L"endMinutes", L"1130", path.c_str());
+    for (const auto value : {L"", L"unknown", L"duration", L"DURATION", L"endTime", L"ENDTIME"}) {
+        WritePrivateProfileStringW(L"work", L"endInputMode", value, path.c_str());
+        const auto loaded = offwork::LoadSettings(path.wstring());
+        const auto expected = _wcsicmp(value, L"endTime") == 0
+            ? EndInputMode::EndTime : EndInputMode::WorkDuration;
+        CHECK(loaded.endInputMode == expected);
+        CHECK(loaded.startMinutes == 532 && loaded.endMinutes == 1130);
+    }
+    WritePrivateProfileStringW(L"work", L"endInputMode", nullptr, path.c_str());
+    CHECK(offwork::LoadSettings(path.wstring()).endInputMode == EndInputMode::WorkDuration);
+    std::filesystem::remove(path);
 }
 
 }  // namespace
 
 int main() {
+    MissingOrInvalidEndModeDefaultsToDurationWithoutChangingTheSchedule();
     {
         const auto maskPath = std::filesystem::temp_directory_path() /
             (L"offwork-mask-" + std::to_wstring(GetCurrentProcessId()) + L".ini");

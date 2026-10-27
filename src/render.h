@@ -39,7 +39,7 @@ struct RenderModel {
     bool updateDownloading = false;
     int updatePercent = -1;
     unsigned updateProgressPhase = 0;
-    EndInputMode editEndInputMode = EndInputMode::EndTime;
+    EndInputMode editEndInputMode = EndInputMode::WorkDuration;
     HotElement hot = HotElement::None;
     HICON icon = nullptr;
     const FontSet* fonts = nullptr;

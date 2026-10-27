@@ -16,6 +16,7 @@ namespace {
 void SettingsApplyOnFocusLoss() {
     using namespace offwork;
     g.settings = Settings{};
+    g.settings.endInputMode = EndInputMode::EndTime;
     g.settings.hideEarned = true;
     g.expanded = true;
     PopulateFields();
@@ -60,6 +61,7 @@ void SettingsApplyOnFocusLoss() {
 void InvalidEditsRevertWithoutChangingSavedSettings() {
     using namespace offwork;
     g.settings = Settings{};
+    g.settings.endInputMode = EndInputMode::EndTime;
     g.expanded = true;
     PopulateFields();
     SaveSettings(g.settingsPath, g.settings);
@@ -385,6 +387,7 @@ void OcrSilentlyUpdatesAndSavesTime() {
         (L"offwork-ocr-edit-" + std::to_wstring(GetCurrentProcessId()) + L".ini");
     g.settingsPath = path.wstring();
     g.settings = Settings{};
+    g.settings.endInputMode = EndInputMode::EndTime;
     PopulateFields();
     CompleteOcr({L"上班打卡 08:55", 535, {}});
     CHECK(g.settings.startMinutes == 535 && g.settings.endMinutes == 1080);
@@ -393,8 +396,9 @@ void OcrSilentlyUpdatesAndSavesTime() {
     CHECK(g.footerText == kDefaultFooter && !g.footerIsError);
 
     g.settings = Settings{};
-    g.settings.endInputMode = EndInputMode::WorkDuration;
+    CHECK(g.settings.endInputMode == EndInputMode::WorkDuration);
     PopulateFields();
+    CHECK(g.editEndInputMode == EndInputMode::WorkDuration && g.fields[1].text == L"9");
     CompleteOcr({{}, 535, {}});
     CHECK(g.settings.startMinutes == 535 && g.settings.endMinutes == 1075);
     CHECK(g.fields[1].text == L"9");
@@ -526,9 +530,52 @@ void OcrErrorAndVersionFitInTheFooter() {
     }
 }
 
+void VersionIsVisibleBelowCollapsedSettings() {
+    using namespace offwork;
+    const auto versionBox = kCollapsedVersionText;
+    for (const int scale : {75, 100, 150}) {
+        for (const UINT dpi : {96u, 144u, 192u}) {
+            RenderModel model;
+            model.settings.hideEarned = true;
+            model.settings.uiScalePercent = scale;
+            model.dpi = dpi;
+            auto fonts = CreateFonts(scale, dpi);
+            model.fonts = &fonts;
+            const auto size = WindowSizeFor(scale, dpi, false);
+            LayeredSurface expected, rendered;
+            CHECK(expected.EnsureSize(size.cx, size.cy) && rendered.EnsureSize(size.cx, size.cy));
+            const auto box = ScaleRect(versionBox, scale, dpi);
+            CHECK(box.top >= ScaleRect(kSettingsButton, scale, dpi).bottom);
+            CHECK(box.right <= size.cx && box.bottom <= size.cy);
+            HBRUSH brush = CreateSolidBrush(kBackground);
+            FillRect(expected.dc(), &box, brush);
+            DeleteObject(brush);
+            const auto oldFont = SelectObject(expected.dc(), fonts.tiny);
+            SetBkMode(expected.dc(), TRANSPARENT);
+            SetTextColor(expected.dc(), kTextMuted);
+            RECT measured = box;
+            const int height = DrawTextW(expected.dc(), L"v" OFFWORK_VERSION_W, -1, &measured,
+                DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
+            CHECK(height > 0 && height <= box.bottom - box.top);
+            CHECK(measured.right - measured.left <= box.right - box.left);
+            RECT textBox = box;
+            DrawTextW(expected.dc(), L"v" OFFWORK_VERSION_W, -1, &textBox,
+                DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            SelectObject(expected.dc(), oldFont);
+            for (const auto* footer : {L"", L"temporary hint"}) {
+                model.footerText = footer;
+                RenderFrame(rendered.dc(), model);
+                CHECK(SamePixels(expected.dc(), rendered.dc(), box));
+            }
+            DestroyFonts(fonts);
+        }
+    }
+}
+
 void EndTimeEditsApplyBeforeOcrRepopulatesFields() {
     using namespace offwork;
     g.settings = Settings{};
+    g.settings.endInputMode = EndInputMode::EndTime;
     g.settings.endMinutes = 1130; // Evidence: 18:50 in fixed-end mode.
     g.expanded = true;
     g.focusedField = -1;
@@ -615,6 +662,9 @@ void EndTimeEditsApplyBeforeOcrRepopulatesFields() {
 
 int main(int argc, char** argv) {
     using namespace offwork;
+    CHECK(g.editEndInputMode == EndInputMode::WorkDuration);
+    CHECK(RenderModel{}.editEndInputMode == EndInputMode::WorkDuration);
+    VersionIsVisibleBelowCollapsedSettings();
     const auto settingsPath = std::filesystem::temp_directory_path() /
         (L"offwork-live-settings-" + std::to_wstring(GetCurrentProcessId()) + L".ini");
     g.settingsPath = settingsPath.wstring();

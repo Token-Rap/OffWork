@@ -2,6 +2,7 @@
 
 #include "calculator.h"
 #include "money_display.h"
+#include "version.h"
 
 #include <algorithm>
 #include <cmath>
@@ -676,6 +677,10 @@ void RenderFrame(HDC dc, const RenderModel& model) {
     DrawChevron(dc, model);
 
     if (!model.expanded) {
+        DrawTextInRect(
+            dc, L"v" OFFWORK_VERSION_W, ToRect(kCollapsedVersionText, scale, dpi),
+            model.fonts->tiny, kTextMuted,
+            DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         return;
     }
 

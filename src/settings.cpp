@@ -47,7 +47,7 @@ Settings NormalizeSettings(const Settings& settings) {
 
     if (settings.endInputMode != EndInputMode::EndTime &&
         settings.endInputMode != EndInputMode::WorkDuration) {
-        normalized.endInputMode = EndInputMode::EndTime;
+        normalized.endInputMode = EndInputMode::WorkDuration;
     }
 
     normalized.uiScalePercent =
@@ -125,11 +125,11 @@ Settings LoadSettings(const std::wstring& path) {
 
     wchar_t inputMode[32] = {};
     GetPrivateProfileStringW(
-        L"work", L"endInputMode", L"endTime", inputMode,
+        L"work", L"endInputMode", L"duration", inputMode,
         static_cast<DWORD>(std::size(inputMode)), path.c_str());
-    settings.endInputMode = _wcsicmp(inputMode, L"duration") == 0
-        ? EndInputMode::WorkDuration
-        : EndInputMode::EndTime;
+    settings.endInputMode = _wcsicmp(inputMode, L"endTime") == 0
+        ? EndInputMode::EndTime
+        : EndInputMode::WorkDuration;
 
     wchar_t salary[64] = {};
     GetPrivateProfileStringW(

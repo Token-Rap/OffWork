@@ -73,6 +73,7 @@ inline constexpr LogicalRect kEarnedAmount{20, 204, 250, 244};
 inline constexpr LogicalRect kSalaryText{220, 217, 340, 241};
 inline constexpr LogicalRect kSettingsButton{20, 266, 340, 304};
 inline constexpr LogicalRect kSettingsLabel{36, 266, 130, 304};
+inline constexpr LogicalRect kCollapsedVersionText{250, 306, 340, 326};
 inline constexpr int kChevronCenterX = 318;
 inline constexpr int kChevronCenterY = 285;
 

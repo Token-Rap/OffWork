@@ -55,7 +55,7 @@ struct AppState {
     bool autostartEnabled = false;
     bool screenshotDragActive = false;
     std::future<OcrResult> ocrTask;
-    EndInputMode editEndInputMode = EndInputMode::EndTime;
+    EndInputMode editEndInputMode = EndInputMode::WorkDuration;
     HotElement hot = HotElement::None;
 
     FieldState fields[kFieldCount];

@@ -21,7 +21,7 @@ struct Settings {
     int uiScalePercent = 100;
     int opacityPercent = 100;
     bool hideEarned = false;
-    EndInputMode endInputMode = EndInputMode::EndTime;
+    EndInputMode endInputMode = EndInputMode::WorkDuration;
 };
 
 // Pure: clamps every field into range and falls back to the defaults for a
