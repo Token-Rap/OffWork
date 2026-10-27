@@ -1,40 +1,32 @@
-# OffWork 🐱
+# OffWork
 
-一只陪你等下班的 Windows 原生悬浮窗，实时显示下班倒计时、工作进度和今日已赚金额。
+陪你等下班的 Windows 悬浮窗：下班倒计时、工作进度和今日已赚金额。
 
-[官网](https://offwork.ziton-ai.cc) · [下载](https://github.com/alertform/OffWork/releases)
+[官网](https://offwork.ziton-ai.cc) · [下载最新版](https://github.com/Token-Rap/OffWork/releases/latest)
 
 ## 功能
 
-- 自定义上下班时间，或按净工作时长计算下班时间：下班 = 上班 + 净工时 + 午休时长，支持跨午夜班次。
-- 自定义午休起止时间，午休期间显示「午休中」，金额和进度暂停累计。
-- 可选「距离下班时间扣除午休」（默认关闭）：开启后仅扣除尚未结束的午休，午休后不再扣除；关闭时显示到下班的实际剩余时间。提醒始终按实际下班时间触发。
-- 按日薪实时计算已赚金额，支持一键隐藏金额。
-- 拖入打卡截图，本机 OCR 自动填写上班时间，不上传图片。
-- 窗口置顶、缩放、透明度调节，支持系统托盘与开机自启。
-- 下班前五分钟及到点提醒，支持自动检查更新、点击下载并安装。
+- 拖入打卡截图，本机 OCR 自动填写上班时间；失败原因会显示在设置中。
+- 默认使用「时长」模式：下班 = 上班 + 净工作时长 + 午休时长，也可指定固定下班时间。
+- 午休时收入和进度暂停；可选「距离下班时间扣除午休」，默认关闭。
+- 支持金额隐藏、窗口置顶、缩放、透明度、托盘、开机自启和下班提醒。
+- 支持应用内更新；v0.4.4 在设置折叠时也会在右下角显示版本号。
 
-<img src="docs/drag-drop.gif" width="360" alt="拖入打卡截图，自动将上班时间填为 08:55">
+<img src="docs/drag-drop.gif" width="360" alt="拖入打卡截图，自动填写上班时间">
 
 ## 下载与使用
 
-前往 [GitHub Releases](https://github.com/alertform/OffWork/releases) 下载 `OffWork-Setup.exe`（安装版）或 `OffWork.exe`（免安装版）。支持 Windows 10/11 x64，无需额外运行时。
+在 [GitHub Releases](https://github.com/Token-Rap/OffWork/releases/latest) 下载 `OffWork-Setup.exe`（安装版）或 `OffWork.exe`（免安装版），支持 Windows 10/11 x64。
 
-运行后展开「设置」，填写上班时间、下班时间或时长、日薪和午休时间，设置自动保存。首次使用默认选择「时长」，已有的有效结束方式设置会保留。关闭窗口会隐藏到系统托盘，右键托盘图标可退出。
-
-截图识别使用 Windows 自带 OCR；如提示缺少识别语言，请在系统语言设置中安装简体中文 OCR 组件。
-
-例如 09:00 上班、净工时 8 小时、午休 12:00–13:00，下班为 18:00；OCR 将上班改为 08:55 后，下班为 17:55。修改午休会在时长模式下保持净工时并重算下班；固定下班时间模式则保持选定的下班时间。已有设置的上下班与午休时间保留，时长字段按净工时显示（09:00–18:00 减去一小时午休显示 8 小时）。
-
-OCR 只填写上班时间：「下班时间」模式保留选定的固定下班时间；「工作时长」模式保留时长并重算下班时间。识别成功后立即保存并刷新界面；失败时会展开设置显示具体原因，并尝试显示托盘提示。设置折叠时，窗口右下角显示当前版本号；展开后可在底部查看。
+运行后展开「设置」，填写上班时间、工作时长、午休和日薪，自动保存。拖入截图即可更新上班时间，时长模式会重算下班时间；固定下班时间模式保持原值。关闭窗口后驻留托盘，右键托盘图标可退出。
 
 ## 构建
 
-安装 Visual Studio 的 C++ 桌面开发工具、Windows SDK 和 CMake 3.24+，在 Developer PowerShell 中执行：
+安装 Visual Studio C++ 桌面开发工具、Windows SDK 和 CMake 3.24+，在 Developer PowerShell 中运行：
 
 ```powershell
 cmake -S . -B build -A x64
 cmake --build build --config Release --target OffWork --parallel
 ```
 
-产物：`build\Release\OffWork.exe`（C++20 / Win32，静态 MSVC 运行时）。
+产物：`build\Release\OffWork.exe`。
