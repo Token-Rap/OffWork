@@ -189,7 +189,7 @@ UpdateResult CheckRelease(const std::atomic_bool& cancelled) {
     std::optional<ReleaseInfo> info;
     {
         // Read only the redirect headers; never follow /latest to the HTML page.
-        const auto response = OpenResponse(L"https://github.com/alertform/OffWork/releases/latest", cancelled);
+        const auto response = OpenResponse(L"https://github.com/Token-Rap/OffWork/releases/latest", cancelled);
         if (response && IsRedirect(response->status)) {
             const auto location = ReadLocation(response->request.get());
             if (location) {
@@ -205,7 +205,7 @@ UpdateResult CheckRelease(const std::atomic_bool& cancelled) {
     }
     if (!info && !cancelled) {
         std::string json;
-        if (Fetch(L"https://api.github.com/repos/alertform/OffWork/releases/latest", 2 * 1024 * 1024,
+        if (Fetch(L"https://api.github.com/repos/Token-Rap/OffWork/releases/latest", 2 * 1024 * 1024,
             cancelled, [&](const char* bytes, DWORD count) { json.append(bytes, count); return true; })) {
             info = ParseReleaseInfo(json);
         }

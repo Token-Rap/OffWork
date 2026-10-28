@@ -214,25 +214,29 @@ std::optional<ReleaseInfo> ParseReleaseInfo(std::string_view json) {
     if (!tag || tag->kind != Json::Kind::String || !assets || assets->kind != Json::Kind::Array) return {};
     const auto version = ParseVersion(tag->text);
     if (!version || !version->pre.empty()) return {};
-    const auto expected = "https://github.com/alertform/OffWork/releases/download/" + tag->text + "/OffWork-Setup.exe";
+    const auto expected = "https://github.com/Token-Rap/OffWork/releases/download/" + tag->text + "/OffWork-Setup.exe";
+    const auto legacy = "https://github.com/alertform/OffWork/releases/download/" + tag->text + "/OffWork-Setup.exe";
     for (const auto& asset : assets->array) {
         const auto name = asset.Get("name"), url = asset.Get("browser_download_url");
         if (name && name->kind == Json::Kind::String && name->text == "OffWork-Setup.exe" &&
-            url && url->kind == Json::Kind::String && url->text == expected) return ReleaseInfo{tag->text, url->text};
+            url && url->kind == Json::Kind::String && (url->text == expected || url->text == legacy)) return ReleaseInfo{tag->text, url->text};
     }
     return {};
 }
 std::optional<ReleaseInfo> ParseReleaseLocation(std::string_view location) {
     constexpr std::string_view origin = "https://github.com";
-    constexpr std::string_view prefix = "/alertform/OffWork/releases/tag/";
+    constexpr std::string_view prefix = "/Token-Rap/OffWork/releases/tag/";
+    constexpr std::string_view legacyPrefix = "/alertform/OffWork/releases/tag/";
     if (location.starts_with(origin)) location.remove_prefix(origin.size());
-    if (!location.starts_with(prefix)) return {};
-    const auto tag = location.substr(prefix.size());
+    if (location.starts_with(prefix)) location.remove_prefix(prefix.size());
+    else if (location.starts_with(legacyPrefix)) location.remove_prefix(legacyPrefix.size());
+    else return {};
+    const auto tag = location;
     if (!tag.starts_with('v') || tag.find_first_not_of("v0123456789.") != tag.npos) return {};
     const auto version = ParseVersion(tag);
     if (!version) return {};
     return ReleaseInfo{std::string(tag),
-        "https://github.com/alertform/OffWork/releases/download/" + std::string(tag) + "/OffWork-Setup.exe"};
+        "https://github.com/Token-Rap/OffWork/releases/download/" + std::string(tag) + "/OffWork-Setup.exe"};
 }
 
 void UpdateCheckSchedule::Complete(std::uint64_t now, bool succeeded) {

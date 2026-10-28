@@ -9,12 +9,14 @@ namespace {
 void ReleaseLocations() {
     using namespace offwork;
     for (const auto location : {
+            "https://github.com/Token-Rap/OffWork/releases/tag/v0.4.1",
+            "/Token-Rap/OffWork/releases/tag/v0.4.1",
             "https://github.com/alertform/OffWork/releases/tag/v0.4.1",
             "/alertform/OffWork/releases/tag/v0.4.1"}) {
         const auto release = ParseReleaseLocation(location);
         CHECK(release && release->tag == "v0.4.1");
         CHECK(release->installerUrl ==
-            "https://github.com/alertform/OffWork/releases/download/v0.4.1/OffWork-Setup.exe");
+            "https://github.com/Token-Rap/OffWork/releases/download/v0.4.1/OffWork-Setup.exe");
     }
     CHECK(ParseReleaseLocation("/alertform/OffWork/releases/tag/v10.20.30").has_value());
     for (const auto location : {"", "http://github.com/alertform/OffWork/releases/tag/v0.4.1",
@@ -96,18 +98,26 @@ int main() {
         CHECK(!IsNewerVersion("2.0.0", bad));
     }
     CHECK(IsNewerVersion("999999999999999999999999.0.0", "2.0.0"));
-    const std::string url = "https://github.com/alertform/OffWork/releases/download/v0.4.0/OffWork-Setup.exe";
+    const std::string url = "https://github.com/Token-Rap/OffWork/releases/download/v0.4.0/OffWork-Setup.exe";
     const std::string json = R"({"body":"tag_name: fake, \"assets\": [] \u4e2d", "tag_name":"v0.4.0",
       "draft":false,"prerelease":false,"assets":[
       {"name":"OffWork.exe","browser_download_url":"ignored"},
       {"browser_download_url":")" + url + R"(","name":"OffWork-Setup.exe"}]})";
     auto release = ParseReleaseInfo(json);
     CHECK(release && release->tag == "v0.4.0" && release->installerUrl == url);
+    auto legacyJson = json;
+    legacyJson.replace(legacyJson.find("Token-Rap"), std::string("Token-Rap").size(), "alertform");
+    const auto legacyRelease = ParseReleaseInfo(legacyJson);
+    CHECK(legacyRelease && legacyRelease->installerUrl ==
+        "https://github.com/alertform/OffWork/releases/download/v0.4.0/OffWork-Setup.exe");
+    auto evilJson = json;
+    evilJson.replace(evilJson.find("github.com/"), std::string("github.com/").size(), "github.com.evil.test/");
+    CHECK(!ParseReleaseInfo(evilJson));
     CHECK(!ParseReleaseInfo("{\"tag_name\":\"v0.4.0\",\"assets\":[]}"));
     CHECK(!ParseReleaseInfo("{\"tag_name\":\"v0.4.0\"}"));
     CHECK(!ParseReleaseInfo(json + "garbage"));
     CHECK(!ParseReleaseInfo(json.substr(0, json.size() - 1)));
-    for (const auto from : {std::string("https://github.com/alertform/OffWork/"),
+    for (const auto from : {std::string("https://github.com/Token-Rap/OffWork/"),
                             std::string("OffWork-Setup.exe"), std::string("v0.4.0")}) {
         auto changed = json;
         changed.replace(changed.find(from), from.size(), "untrusted");
