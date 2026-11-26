@@ -32,6 +32,7 @@ void PollScreenshotOcr();
 void ToggleAutostart();
 void TogglePinned();
 void ToggleDeductLunch();
+void ToggleShowResignation();
 void SetEndInputMode(EndInputMode mode);
 
 void FocusNextField(int direction);

@@ -6,6 +6,7 @@ namespace offwork {
 namespace {
 
 wchar_t SeparatorFor(FieldFilter filter) {
+    if (filter == FieldFilter::Date) return L'-';
     return filter == FieldFilter::Time ? L':' : L'.';
 }
 
@@ -151,7 +152,8 @@ FieldState InsertText(
             continue;
         }
         if (character == separator &&
-            next.text.find(separator) != std::wstring::npos) {
+            std::count(next.text.begin(), next.text.end(), separator) >=
+                (filter == FieldFilter::Date ? 2 : 1)) {
             continue;
         }
         if (next.text.size() >= maxLength) {

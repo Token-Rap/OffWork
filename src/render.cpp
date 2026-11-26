@@ -1,6 +1,7 @@
 #include "render.h"
 
 #include "calculator.h"
+#include "resignation.h"
 #include "money_display.h"
 #include "version.h"
 
@@ -143,6 +144,7 @@ const FieldState& FieldFor(const RenderModel& model, int index) {
         case 1: return model.endField;
         case 3: return model.lunchStartField;
         case 4: return model.lunchEndField;
+        case 5: return model.resignationDateField;
         default: return model.salaryField;
     }
 }
@@ -449,6 +451,7 @@ int FieldIndexOf(HotElement element) {
         case HotElement::SalaryField: return 2;
         case HotElement::LunchStartField: return 3;
         case HotElement::LunchEndField: return 4;
+        case HotElement::ResignationDateField: return 5;
         default: return -1;
     }
 }
@@ -459,6 +462,7 @@ const LogicalRect& FieldBox(int fieldIndex) {
         case 1: return kEndBox;
         case 3: return kLunchStartBox;
         case 4: return kLunchEndBox;
+        case 5: return kResignationDateBox;
         default: return kSalaryBox;
     }
 }
@@ -531,6 +535,9 @@ HotElement HitTest(POINT point, const RenderModel& model) {
     if (Contains(ToRect(kAutostartHit, scale, dpi), point)) {
         return HotElement::Autostart;
     }
+    if (Contains(ToRect(kResignationDateBox, scale, dpi), point)) return HotElement::ResignationDateField;
+    if (Contains(ToRect(kResignationCalendarButton, scale, dpi), point)) return HotElement::ResignationCalendar;
+    if (Contains(ToRect(kResignationHit, scale, dpi), point)) return HotElement::ShowResignation;
     return HotElement::None;
 }
 
@@ -634,6 +641,17 @@ void RenderFrame(HDC dc, const RenderModel& model) {
 
     DrawTextInRect(dc, status, ToRect(kStatusText, scale, dpi),
                    model.fonts->label, kTextSecondary);
+    const std::chrono::year_month_day localDate{std::chrono::year{model.now.wYear},
+        std::chrono::month{model.now.wMonth}, std::chrono::day{model.now.wDay}};
+    if (localDate.ok()) {
+        const auto days = RemainingResignationWorkdays(std::chrono::sys_days{localDate},
+            model.settings.resignationDate, model.settings.showResignation);
+        if (days) {
+            DrawTextInRect(dc, L"剩余 " + std::to_wstring(*days) + L" 天离职",
+                ToRect(kResignationText, scale, dpi), model.fonts->tiny, kTextMuted,
+                DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        }
+    }
     DrawTextInRect(dc, countdown, ToRect(kCountdownText, scale, dpi),
                    model.fonts->countdown, kTextPrimary);
 
@@ -725,6 +743,19 @@ void RenderFrame(HDC dc, const RenderModel& model) {
     DrawTextInRect(dc, L"开机自启", ToRect(kAutostartLabel, scale, dpi),
                    model.fonts->label, kTextPrimary);
     DrawToggle(dc, model, kAutostartToggle, HotElement::Autostart, model.autostartEnabled);
+
+    DrawTextInRect(dc, L"离职日期（YYYY-MM-DD，可留空）", ToRect(kResignationDateLabel, scale, dpi),
+        model.fonts->tiny, kTextPrimary);
+    DrawField(dc, model, 5);
+    FillRounded(dc, ToRect(kResignationCalendarButton, scale, dpi), ScaleValue(5, scale, dpi),
+        model.hot == HotElement::ResignationCalendar ? kButtonHover : kButtonBackground);
+    DrawTextInRect(dc, L"日历 ▾", ToRect(kResignationCalendarButton, scale, dpi),
+        model.fonts->tiny, model.hot == HotElement::ResignationCalendar ? kTextPrimary : kTextMuted);
+    DrawTextInRect(dc, L"显示离职工作日倒计时", ToRect(kResignationToggleLabel, scale, dpi),
+        model.fonts->tiny, kTextPrimary);
+    DrawToggle(dc, model, kResignationToggle, HotElement::ShowResignation, model.settings.showResignation);
+    DrawTextInRect(dc, L"按周一至周五，不含节假日/补班调整", ToRect(kResignationCoverage, scale, dpi),
+        model.fonts->tiny, kTextMuted);
 
     DrawTextInRect(
         dc, model.footerText,
