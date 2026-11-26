@@ -1,0 +1,81 @@
+use std::path::Path;
+
+#[cfg(target_os = "macos")]
+fn read(path: &Path) -> Result<String, String> {
+    use std::ffi::{c_char, c_void, CStr, CString};
+    extern "C" {
+        fn offwork_vision(path: *const c_char) -> *mut c_char;
+        fn free(ptr: *mut c_void);
+    }
+    let path = CString::new(path.as_os_str().as_encoded_bytes()).map_err(|_| "无效路径")?;
+    // Vision returns either null or a freshly allocated NUL-terminated buffer.
+    unsafe {
+        let raw = offwork_vision(path.as_ptr());
+        if raw.is_null() {
+            return Err("系统识别失败，请换用清晰截图".into());
+        }
+        let text = CStr::from_ptr(raw).to_string_lossy().into_owned();
+        free(raw.cast());
+        Ok(text)
+    }
+}
+#[cfg(target_os = "linux")]
+fn read(path: &Path) -> Result<String, String> {
+    let output = std::process::Command::new("tesseract")
+        .arg(path)
+        .args(["stdout", "-l", "chi_sim+eng", "--psm", "6"])
+        .output()
+        .map_err(|_| "请安装 tesseract-ocr 和 tesseract-ocr-chi-sim")?;
+    if !output.status.success()
+        || String::from_utf8_lossy(&output.stderr).contains("Failed loading language")
+    {
+        return Err("请检查图片和 Tesseract 中英文语言包".into());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+#[cfg(windows)]
+fn read(path: &Path) -> Result<String, String> {
+    use windows::{
+        core::HSTRING,
+        Globalization::Language,
+        Graphics::Imaging::BitmapDecoder,
+        Media::Ocr::OcrEngine,
+        Storage::{FileAccessMode, StorageFile},
+    };
+    fn recognize(path: &Path) -> windows::core::Result<String> {
+        let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(path.as_os_str()))?.get()?;
+        let stream = file.OpenAsync(FileAccessMode::Read)?.get()?;
+        let decoder = BitmapDecoder::CreateAsync(&stream)?.get()?;
+        let bitmap = decoder.GetSoftwareBitmapAsync()?.get()?;
+        let engine = Language::CreateLanguage(&HSTRING::from("zh-Hans"))
+            .and_then(|lang| OcrEngine::TryCreateFromLanguage(&lang))
+            .or_else(|_| OcrEngine::TryCreateFromUserProfileLanguages())?;
+        let result = engine.RecognizeAsync(&bitmap)?.get()?;
+        let mut lines = Vec::new();
+        for line in result.Lines()? {
+            lines.push(line.Text()?.to_string());
+        }
+        Ok(lines.join("\n"))
+    }
+    recognize(path).map_err(|e| format!("系统识别失败，请检查 OCR 语言包（{e}）"))
+}
+pub fn recognize(path: &Path) -> Result<i32, String> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if !matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "bmp") {
+        return Err("请拖入一张 PNG、JPEG 或 BMP 图片".into());
+    }
+    let meta = path.metadata().map_err(|_| "无法读取图片")?;
+    if !meta.is_file() || meta.len() > 20 * 1024 * 1024 {
+        return Err("图片须小于 20 MiB".into());
+    }
+    offwork_core::ocr::clock_in(&read(path)?).ok_or("未识别到打卡时间，请手动填写".into())
+}
+#[test]
+fn native_fixture() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/data/dingtalk_clockin.png");
+    assert_eq!(recognize(&path).unwrap(), 535);
+}

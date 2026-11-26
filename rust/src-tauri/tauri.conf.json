@@ -1,0 +1,46 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "OffWork",
+  "version": "0.1.0",
+  "identifier": "io.github.token-rap.offwork.prototype",
+  "build": {
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "下班手账",
+        "width": 360,
+        "height": 336,
+        "minWidth": 320,
+        "minHeight": 300,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "icon": [
+      "icons/32x32.png",
+      "icons/icon.ico",
+      "icons/icon.icns"
+    ],
+    "category": "Productivity",
+    "linux": {
+      "deb": {
+        "recommends": [
+          "tesseract-ocr",
+          "tesseract-ocr-chi-sim"
+        ]
+      }
+    }
+  }
+}
