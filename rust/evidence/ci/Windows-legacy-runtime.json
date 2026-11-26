@@ -1,0 +1,20 @@
+{
+  "launch_to_visible_window_ms": 212,
+  "seconds_per_state": 30,
+  "visible": {
+    "avg_rss_mib": 23.62,
+    "peak_rss_mib": 23.62,
+    "cpu_pct_one_core": 0.156,
+    "pids": [
+      6400
+    ]
+  },
+  "hidden": {
+    "avg_rss_mib": 23.59,
+    "peak_rss_mib": 23.59,
+    "cpu_pct_one_core": 0.052,
+    "pids": [
+      6400
+    ]
+  }
+}
