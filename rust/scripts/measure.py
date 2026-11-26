@@ -40,7 +40,7 @@ def sample(root):
     return rss, cpu
 
 def wait_until(condition, process, label):
-    deadline = time.monotonic() + 45
+    deadline = time.monotonic() + 120  # shared runners can stall WebView2 cold start
     while not condition():
         if process.poll() is not None or time.monotonic() > deadline:
             raise RuntimeError(f"Timed out waiting for {label}, process status {process.poll()}")
