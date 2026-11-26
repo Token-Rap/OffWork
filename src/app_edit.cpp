@@ -4,6 +4,7 @@
 #include "app_view.h"
 #include "autostart.h"
 #include "calculator.h"
+#include "resignation.h"
 
 #include <cmath>
 #include <chrono>
@@ -34,6 +35,7 @@ bool SetNetDuration(Settings& settings, int minutes) {
 // -- small helpers ----------------------------------------------------------
 
 FieldFilter FilterFor(int fieldIndex) {
+    if (fieldIndex == 5) return FieldFilter::Date;
     return fieldIndex == 2 ||
             (fieldIndex == 1 && g.editEndInputMode == EndInputMode::WorkDuration)
         ? FieldFilter::Decimal
@@ -41,6 +43,7 @@ FieldFilter FilterFor(int fieldIndex) {
 }
 
 std::size_t MaxLengthFor(int fieldIndex) {
+    if (fieldIndex == 5) return 10;
     return fieldIndex == 2 ? kSalaryMaxLength : kTimeMaxLength;
 }
 
@@ -105,6 +108,7 @@ void PopulateFields() {
     g.fields[2] = MakeField(FormatSalaryValue(g.settings.dailySalary));
     g.fields[3] = MakeField(g.settings.lunchStartMinutes < 0 ? L"" : FormatTimeValue(g.settings.lunchStartMinutes));
     g.fields[4] = MakeField(g.settings.lunchEndMinutes < 0 ? L"" : FormatTimeValue(g.settings.lunchEndMinutes));
+    g.fields[5] = MakeField(g.settings.resignationDate);
 }
 
 bool ParseTimeText(const std::wstring& text, int& minutes) {
@@ -155,6 +159,7 @@ FieldState SettingsField(int index) {
             : FormatTimeValue(g.settings.endMinutes));
         case 2: return MakeField(FormatSalaryValue(g.settings.dailySalary));
         case 3: return MakeField(g.settings.lunchStartMinutes < 0 ? L"" : FormatTimeValue(g.settings.lunchStartMinutes));
+        case 5: return MakeField(g.settings.resignationDate);
         default: return MakeField(g.settings.lunchEndMinutes < 0 ? L"" : FormatTimeValue(g.settings.lunchEndMinutes));
     }
 }
@@ -274,6 +279,19 @@ void WriteClipboardText(HWND owner, const std::wstring& text) {
 
 void ApplyFieldChange(int index) {
     if (index < 0 || index >= kFieldCount) return;
+    if (index == 5) {
+        const auto& text = g.fields[5].text;
+        if (text.empty() || ParseResignationDate(text)) {
+            g.settings.resignationDate = text;
+            SaveSettings(g.settingsPath, g.settings);
+            ResetFooter();
+        } else {
+            SetFooter(L"请输入有效离职日期 YYYY-MM-DD，或清空日期", true);
+        }
+        g.fields[5] = SettingsField(5);
+        Present();
+        return;
+    }
     const int otherLunchField = index == 3 ? 4 : 3;
     if (g.fields[index].text == SettingsField(index).text &&
         (index < 3 || g.fields[otherLunchField].text == SettingsField(otherLunchField).text)) return;
@@ -344,6 +362,12 @@ void ToggleDeductLunch() {
     g.settings.deductLunch = !g.settings.deductLunch;
     SaveSettings(g.settingsPath, g.settings);
     ResetFooter();
+    Present();
+}
+
+void ToggleShowResignation() {
+    g.settings.showResignation = !g.settings.showResignation;
+    SaveSettings(g.settingsPath, g.settings);
     Present();
 }
 
@@ -502,7 +526,7 @@ bool HandleFieldKey(WPARAM key) {
         ResetFooter();
     }
     if (index == 1) ApplyLiveEndChange();
-    if (index >= 3) ApplyLiveLunchChange();
+    if (index == 3 || index == 4) ApplyLiveLunchChange();
     g.caretVisible = true;
     SetTimer(g.window, kCaretTimer, kCaretBlinkMs, nullptr);
     Present();

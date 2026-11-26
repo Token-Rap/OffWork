@@ -16,6 +16,7 @@ enum class FieldFilter {
     Time,     // digits plus a single colon
     Decimal,  // digits plus a single dot
     Integer,  // digits only
+    Date,     // digits plus two hyphens (YYYY-MM-DD)
 };
 
 struct FieldState {

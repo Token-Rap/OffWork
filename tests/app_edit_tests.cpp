@@ -2,9 +2,14 @@
 #include "app_view.h"
 #include "calculator.h"
 #include "check.h"
+#include "resignation_calendar.h"
+#include <commctrl.h>
+#include <tuple>
 #include <filesystem>
 #include <cstdint>
 #include <future>
+#include <fstream>
+#include <vector>
 #include <iostream>
 #include <stdexcept>
 #include <chrono>
@@ -293,8 +298,8 @@ void SmallControlsAndMaskRenderCorrectly() {
                 };
                 CHECK(HitTest(center(kEyeButton), m) == HotElement::HideEarned);
                 if (expanded) {
-                    // The former Save button area is no longer interactive.
-                    CHECK(HitTest(POINT{ScaleValue(180, scale, dpi), ScaleValue(613, scale, dpi)}, m)
+                    // The gap above the footer is not interactive.
+                    CHECK(HitTest(POINT{ScaleValue(180, scale, dpi), ScaleValue(730, scale, dpi)}, m)
                           == HotElement::None);
                     CHECK(HitTest(center(kLunchStartBox), m) == HotElement::LunchStartField);
                     CHECK(FieldIndexOf(HotElement::LunchStartField) == 3);
@@ -323,7 +328,7 @@ void SmallControlsAndMaskRenderCorrectly() {
                 RenderFrame(a.dc(), m);
                 if (expanded) {
                     CHECK(GetPixel(a.dc(), ScaleValue(180, scale, dpi),
-                                   ScaleValue(613, scale, dpi)) == kPanelBackground);
+                                   ScaleValue(730, scale, dpi)) == kPanelBackground);
                 }
                 // Download activity has a ring on the indicator, not just a
                 // dimmed arrow. This point is on the ring above the arrow.
@@ -803,7 +808,346 @@ void EndTimeEditsApplyBeforeOcrRepopulatesFields() {
     CHECK(g.settings.endMinutes == 450 && g.fields[1].text == L"07:30");
 }
 
+void ResignationEditorPersistsIndependently() {
+    using namespace offwork;
+    g.settings = Settings{};
+    g.expanded = true;
+    g.focusedField = -1;
+    PopulateFields();
+    CHECK(FilterFor(5) == FieldFilter::Date && MaxLengthFor(5) == 10);
+    SetFocusedField(5);
+    g.fields[5] = InsertText(SelectAll(g.fields[5]), L"2026-11-30", FilterFor(5), MaxLengthFor(5));
+    CHECK(g.fields[5].text == L"2026-11-30");
+    SetFocusedField(3); // Must not mistake the new field for a lunch endpoint.
+    CHECK(g.settings.resignationDate == L"2026-11-30");
+    CHECK(LoadSettings(g.settingsPath).resignationDate == L"2026-11-30");
+    CHECK(!g.settings.showResignation);
+    CHECK(g.settings.lunchStartMinutes == 720 && g.settings.lunchEndMinutes == 810);
+    const auto reminder = g.reminder;
+    ToggleShowResignation();
+    CHECK(LoadSettings(g.settingsPath).showResignation);
+    CHECK(g.reminder.lastPhase == reminder.lastPhase);
+    ToggleShowResignation();
+    CHECK(!LoadSettings(g.settingsPath).showResignation);
+    CHECK(LoadSettings(g.settingsPath).resignationDate == L"2026-11-30");
+    SetFocusedField(5);
+    g.fields[5] = MakeField(L"2026-02-29");
+    SetFocusedField(-1);
+    CHECK(g.footerIsError && g.fields[5].text == L"2026-11-30");
+    CHECK(LoadSettings(g.settingsPath).resignationDate == L"2026-11-30");
+    SetFocusedField(5);
+    g.fields[5] = MakeField(L"");
+    SetFocusedField(-1);
+    CHECK(!g.footerIsError && LoadSettings(g.settingsPath).resignationDate.empty());
+    CHECK(g.settings.endMinutes == 1080 && g.settings.lunchEndMinutes == 810);
+}
+
+void SavePreview(offwork::LayeredSurface& surface, const std::filesystem::path& path) {
+    BITMAPINFO info = {};
+    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = surface.width();
+    info.bmiHeader.biHeight = -surface.height();
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+    std::vector<char> pixels(static_cast<std::size_t>(surface.width()) * surface.height() * 4);
+    CHECK(GetDIBits(surface.dc(), static_cast<HBITMAP>(GetCurrentObject(surface.dc(), OBJ_BITMAP)),
+        0, surface.height(), pixels.data(), &info, DIB_RGB_COLORS) != 0);
+    BITMAPFILEHEADER header = {};
+    header.bfType = 0x4d42;
+    header.bfOffBits = sizeof(header) + sizeof(info.bmiHeader);
+    header.bfSize = header.bfOffBits + static_cast<DWORD>(pixels.size());
+    std::ofstream file(path, std::ios::binary);
+    file.write(reinterpret_cast<const char*>(&header), sizeof(header));
+    file.write(reinterpret_cast<const char*>(&info.bmiHeader), sizeof(info.bmiHeader));
+    file.write(pixels.data(), static_cast<std::streamsize>(pixels.size()));
+    CHECK(file.good());
+}
+
+void ResignationRendersAcrossLocalMidnight(const std::filesystem::path& previews = {}) {
+    using namespace offwork;
+    for (const int scale : {75, 100, 150}) {
+        for (const UINT dpi : {96u, 144u, 192u}) {
+            for (const bool expanded : {false, true}) {
+                RenderModel m;
+                m.expanded = expanded;
+                m.settings.uiScalePercent = scale;
+                m.settings.resignationDate = L"2026-11-30";
+                m.startField = MakeField(L"09:00");
+                m.endField = MakeField(L"7.5");
+                m.salaryField = MakeField(L"500");
+                m.lunchStartField = MakeField(L"12:00");
+                m.lunchEndField = MakeField(L"13:30");
+                m.footerText = kDefaultFooter;
+                m.resignationDateField = MakeField(m.settings.resignationDate);
+                m.dpi = dpi;
+                m.now = {2026, 11, 4, 26, 23, 59, 59, 0};
+                auto fonts = CreateFonts(scale, dpi);
+                m.fonts = &fonts;
+                const auto size = WindowSizeFor(scale, dpi, expanded);
+                LayeredSurface hidden, shown, expected;
+                CHECK(hidden.EnsureSize(size.cx, size.cy) && shown.EnsureSize(size.cx, size.cy));
+                CHECK(expected.EnsureSize(size.cx, size.cy));
+                const auto box = ScaleRect(kResignationText, scale, dpi);
+                const auto expectText = [&](const wchar_t* text) {
+                    HBRUSH brush = CreateSolidBrush(kBackground);
+                    FillRect(expected.dc(), &box, brush);
+                    DeleteObject(brush);
+                    SetBkMode(expected.dc(), TRANSPARENT);
+                    SetTextColor(expected.dc(), kTextMuted);
+                    const auto old = SelectObject(expected.dc(), fonts.tiny);
+                    RECT measured = box;
+                    DrawTextW(expected.dc(), text, -1, &measured, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
+                    CHECK(measured.right - measured.left <= box.right - box.left);
+                    CHECK(measured.bottom - measured.top <= box.bottom - box.top);
+                    RECT target = box;
+                    DrawTextW(expected.dc(), text, -1, &target,
+                        DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                    SelectObject(expected.dc(), old);
+                    CHECK(SamePixels(expected.dc(), shown.dc(), box));
+                };
+                RenderFrame(hidden.dc(), m);
+                m.settings.showResignation = true;
+                RenderFrame(shown.dc(), m);
+                CHECK(!SamePixels(hidden.dc(), shown.dc(), box));
+                expectText(L"剩余 2 天离职");
+                CHECK(SamePixels(hidden.dc(), shown.dc(), ScaleRect(kCountdownText, scale, dpi)));
+                if (expanded) {
+                    const auto dateBox = ScaleRect(kResignationDateBox, scale, dpi);
+                    CHECK(HitTest({dateBox.left + 2, dateBox.top + 2}, m) == HotElement::ResignationDateField);
+                    const auto toggle = ScaleRect(kResignationHit, scale, dpi);
+                    CHECK(HitTest({toggle.left + 2, toggle.top + 2}, m) == HotElement::ShowResignation);
+                    CHECK(dateBox.bottom < ScaleRect(kResignationHit, scale, dpi).top);
+                    CHECK(ScaleRect(kFooterErrorText, scale, dpi).bottom <= size.cy);
+                }
+                if (!previews.empty() && scale == 100 && dpi == 96) {
+                    SavePreview(shown, previews / (expanded ? L"expanded.bmp" : L"collapsed.bmp"));
+                    SavePreview(hidden, previews / (expanded ? L"expanded-hidden.bmp" : L"collapsed-hidden.bmp"));
+                }
+                m.now.wDay = 27; m.now.wHour = 0; m.now.wMinute = 0; m.now.wSecond = 0;
+                RenderFrame(shown.dc(), m);
+                expectText(L"剩余 1 天离职");
+                m.now.wDay = 30;
+                RenderFrame(shown.dc(), m);
+                expectText(L"剩余 0 天离职");
+                m.now.wMonth = 12; m.now.wDay = 1;
+                RenderFrame(shown.dc(), m);
+                expectText(L"");
+                m.now.wMonth = 11; m.now.wDay = 26;
+                for (const auto date : {L"", L"2026-02-29"}) {
+                    m.settings.resignationDate = date;
+                    RenderFrame(shown.dc(), m);
+                    expectText(L"");
+                }
+                DestroyFonts(fonts);
+            }
+        }
+    }
+}
+
 }  // namespace
+
+void CalendarWindowChecks(const std::filesystem::path& previews = {}) {
+    using namespace offwork;
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    WNDCLASSW host{};
+    host.lpfnWndProc = DefWindowProcW;
+    host.hInstance = GetModuleHandleW(nullptr);
+    host.lpszClassName = L"OffWork.CalendarTestHost";
+    CHECK(RegisterClassW(&host) != 0);
+    g.window = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW, host.lpszClassName,
+        L"OffWork isolated calendar test", WS_POPUP | WS_VISIBLE, 20, 20, 360, 770,
+        nullptr, nullptr, host.hInstance, nullptr);
+    CHECK(g.window != nullptr);
+    const auto pump = [] {
+        MSG message{};
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+    };
+    const auto open = [&] {
+        ShowResignationCalendar();
+        pump();
+        const HWND window = FindWindowW(L"OffWork.ResignationCalendar", nullptr);
+        CHECK(window != nullptr && GetWindow(window, GW_OWNER) == g.window);
+        const HWND cal = FindWindowExW(window, nullptr, MONTHCAL_CLASSW, nullptr);
+        CHECK(cal != nullptr && GetFocus() == cal);
+        return std::pair{window, cal};
+    };
+    const auto selected = [](HWND cal) {
+        SYSTEMTIME result{};
+        CHECK(MonthCal_GetCurSel(cal, &result));
+        return result;
+    };
+    g.settings = Settings{};
+    g.settings.resignationDate = L"2027-03-15";
+    g.settings.showResignation = true;
+    g.expanded = true;
+    PopulateFields();
+    SaveSettings(g.settingsPath, g.settings);
+    g.dpi = GetDpiForWindow(g.window);
+    Present();
+    std::cout << "Real HWND calendar; actual owner DPI=" << g.dpi << '\n';
+    auto [window, cal] = open();
+    CHECK(selected(cal).wYear == 2027 && selected(cal).wMonth == 3 && selected(cal).wDay == 15);
+    CHECK(MonthCal_GetColor(cal, MCSC_MONTHBK) == kPanelBackground);
+    CHECK(MonthCal_GetColor(cal, MCSC_TEXT) == kTextPrimary);
+    if (!previews.empty()) {
+        std::filesystem::create_directories(previews);
+        SavePreview(g.surface, previews / L"expanded-calendar-entry.bmp");
+        RECT bounds{};
+        CHECK(GetWindowRect(window, &bounds));
+        LayeredSurface snapshot;
+        CHECK(snapshot.EnsureSize(bounds.right - bounds.left, bounds.bottom - bounds.top));
+        CHECK(PrintWindow(window, snapshot.dc(), 0));
+        SavePreview(snapshot, previews / L"calendar-window.bmp");
+    }
+    ShowResignationCalendar(); // Reopening reuses the owned popup.
+    CHECK(FindWindowW(L"OffWork.ResignationCalendar", nullptr) == window);
+    RECT navigationClient{};
+    GetClientRect(cal, &navigationClient);
+    bool nextClicked = false;
+    for (int y = 0; y < navigationClient.bottom / 3 && !nextClicked; ++y) {
+        for (int x = 0; x < navigationClient.right && !nextClicked; ++x) {
+            MCHITTESTINFO hit{};
+            hit.cbSize = MCHITTESTINFO_V1_SIZE;
+            hit.pt = {x, y};
+            if (MonthCal_HitTest(cal, &hit) != MCHT_TITLEBTNNEXT) continue;
+            SendMessageW(cal, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(x, y));
+            SendMessageW(cal, WM_LBUTTONUP, 0, MAKELPARAM(x, y));
+            nextClicked = true;
+        }
+    }
+    CHECK(nextClicked);
+    SYSTEMTIME visible[2]{};
+    CHECK(MonthCal_GetMonthRange(cal, GMR_VISIBLE, visible) != 0);
+    CHECK(visible[0].wMonth == 4 || visible[1].wMonth == 4);
+    CHECK(LoadSettings(g.settingsPath).resignationDate == L"2027-03-15");
+    SendMessageW(cal, WM_KEYDOWN, VK_NEXT, 0);
+    CHECK(selected(cal).wMonth == 4 || selected(cal).wMonth == 5);
+    CHECK(LoadSettings(g.settingsPath).resignationDate == L"2027-03-15");
+    SendMessageW(cal, WM_KEYDOWN, VK_ESCAPE, 0);
+    pump();
+    CHECK(!IsWindow(window) && g.focusedField == 5 && GetFocus() == g.window);
+    CHECK(g.settings.resignationDate == L"2027-03-15");
+    std::tie(window, cal) = open();
+    SendMessageW(cal, WM_KEYDOWN, VK_RIGHT, 0);
+    CHECK(selected(cal).wDay == 16);
+    SendMessageW(cal, WM_KEYDOWN, VK_RETURN, 0);
+    pump();
+    CHECK(!IsWindow(window) && LoadSettings(g.settingsPath).resignationDate == L"2027-03-16");
+    CHECK(BuildModel().settings.resignationDate == L"2027-03-16");
+    std::tie(window, cal) = open();
+    // Use native hit testing and actual mouse messages to choose a day.
+    RECT client{};
+    GetClientRect(cal, &client);
+    bool clicked = false;
+    for (int y = 0; y < client.bottom && !clicked; y += 3) {
+        for (int x = 0; x < client.right && !clicked; x += 3) {
+            MCHITTESTINFO hit{};
+            hit.cbSize = MCHITTESTINFO_V1_SIZE;
+            hit.pt = {x, y};
+            if (MonthCal_HitTest(cal, &hit) == MCHT_CALENDARDATE && hit.st.wDay == 20) {
+                const LPARAM position = MAKELPARAM(x, y);
+                SendMessageW(cal, WM_LBUTTONDOWN, MK_LBUTTON, position);
+                SendMessageW(cal, WM_LBUTTONUP, 0, position);
+                clicked = true;
+            }
+        }
+    }
+    CHECK(clicked);
+    pump();
+    CHECK(!IsWindow(window) && LoadSettings(g.settingsPath).resignationDate == L"2027-03-20");
+    std::tie(window, cal) = open();
+    SendMessageW(cal, WM_KEYDOWN, VK_TAB, 0);
+    CHECK(GetFocus() == GetDlgItem(window, 100));
+    SendMessageW(GetFocus(), WM_KEYDOWN, VK_RETURN, 0);
+    pump();
+    CHECK(!IsWindow(window) && LoadSettings(g.settingsPath).resignationDate.empty());
+    CHECK(g.settings.showResignation && LoadSettings(g.settingsPath).showResignation);
+    SYSTEMTIME today{};
+    GetLocalTime(&today);
+    std::tie(window, cal) = open();
+    CHECK(selected(cal).wYear == today.wYear && selected(cal).wMonth == today.wMonth && selected(cal).wDay == today.wDay);
+    // External activation cancels; draft navigation must not save.
+    SendMessageW(cal, WM_KEYDOWN, VK_NEXT, 0);
+    SendMessageW(window, WM_ACTIVATE, WA_INACTIVE, 0);
+    CHECK(!IsWindow(window) && g.settings.resignationDate.empty());
+    g.settings.showResignation = false;
+    g.fields[5] = MakeField(L"2028-02-29");
+    SetFocusedField(5);
+    std::tie(window, cal) = open();
+    CHECK(selected(cal).wYear == 2028 && selected(cal).wMonth == 2 && selected(cal).wDay == 29);
+    CHECK(LoadSettings(g.settingsPath).resignationDate == L"2028-02-29");
+    SendMessageW(cal, WM_KEYDOWN, VK_TAB, 0);
+    SendMessageW(GetFocus(), WM_KEYDOWN, VK_TAB, 0);
+    CHECK(GetFocus() == GetDlgItem(window, IDCANCEL));
+    SendMessageW(GetFocus(), WM_KEYDOWN, VK_RETURN, 0);
+    pump();
+    CHECK(!IsWindow(window) && !LoadSettings(g.settingsPath).showResignation);
+    CHECK(LoadSettings(g.settingsPath).resignationDate == L"2028-02-29");
+    g.settings.resignationDate.clear();
+    PopulateFields();
+    MONITORINFO monitor{sizeof(monitor)};
+    CHECK(GetMonitorInfoW(MonitorFromWindow(g.window, MONITOR_DEFAULTTONEAREST), &monitor));
+    for (const UINT dpi : {96u, 144u, 192u}) {
+        for (const int scale : {75, 100, 150}) {
+            g.dpi = dpi;
+            g.settings.uiScalePercent = scale;
+            const SIZE size = WindowSizeFor(scale, dpi, true);
+            for (const POINT corner : {POINT{monitor.rcWork.left, monitor.rcWork.top},
+                POINT{monitor.rcWork.right - size.cx, monitor.rcWork.bottom - size.cy}}) {
+                SetWindowPos(g.window, nullptr, corner.x, corner.y, size.cx, size.cy, SWP_NOZORDER);
+                std::tie(window, cal) = open();
+                RECT bounds{}, calendarBounds{}, clearBounds{};
+                CHECK(GetWindowRect(window, &bounds) && GetWindowRect(cal, &calendarBounds));
+                CHECK(GetWindowRect(GetDlgItem(window, 100), &clearBounds));
+                CHECK(bounds.left >= monitor.rcWork.left && bounds.right <= monitor.rcWork.right);
+                CHECK(bounds.top >= monitor.rcWork.top && bounds.bottom <= monitor.rcWork.bottom);
+                CHECK(calendarBounds.bottom < clearBounds.top && clearBounds.bottom < bounds.bottom);
+                const auto button = ScaleRect(kResignationCalendarButton, scale, dpi);
+                CHECK(HitTest({button.left + 2, button.top + 2}, BuildModel()) == HotElement::ResignationCalendar);
+                CloseResignationCalendar();
+            }
+        }
+    }
+    // Synthetic work areas keep compact layout and scrolling covered on large monitors too.
+    g.dpi = 192;
+    g.settings.uiScalePercent = 150;
+    for (const int workHeight : {360, 96}) {
+        const RECT work{monitor.rcWork.left, monitor.rcWork.top,
+            monitor.rcWork.left + 400, monitor.rcWork.top + workHeight};
+        const RECT anchor{work.right - 30, work.bottom - 5, work.right, work.bottom};
+        ShowResignationCalendarAt(anchor, work);
+        window = FindWindowW(L"OffWork.ResignationCalendar", nullptr);
+        RECT bounds{}, button{};
+        CHECK(window && GetWindowRect(window, &bounds));
+        CHECK(bounds.left >= work.left && bounds.right == work.right);
+        CHECK(bounds.top >= work.top && bounds.bottom <= work.bottom);
+        if (workHeight == 96) {
+            CHECK((GetWindowLongPtrW(window, GWL_STYLE) & WS_VSCROLL) != 0);
+            SendMessageW(window, WM_VSCROLL, SB_BOTTOM, 0);
+        } else {
+            CHECK((GetWindowLongPtrW(window, GWL_STYLE) & WS_VSCROLL) == 0);
+        }
+        CHECK(GetWindowRect(GetDlgItem(window, 100), &button));
+        CHECK(button.top >= bounds.top && button.bottom < bounds.bottom);
+        CloseResignationCalendar();
+    }
+    g.dpi = GetDpiForWindow(g.window);
+    g.settings.uiScalePercent = 100;
+    std::tie(window, cal) = open();
+    RECT suggested{};
+    SendMessageW(window, WM_DPICHANGED, MAKELONG(144, 144), reinterpret_cast<LPARAM>(&suggested));
+    CHECK(!IsWindow(window) && g.settings.resignationDate.empty());
+    CloseResignationCalendar();
+    DestroyWindow(g.window);
+    g.window = nullptr;
+    DestroyFonts(g.fonts);
+    UnregisterClassW(host.lpszClassName, host.hInstance);
+    std::cout << "Calendar mouse selection, keyboard, focus, save/clear/cancel, and 18 DPI/scale/edge cases passed.\n";
+}
 
 int main(int argc, char** argv) {
     using namespace offwork;
@@ -813,6 +1157,20 @@ int main(int argc, char** argv) {
     const auto settingsPath = std::filesystem::temp_directory_path() /
         (L"offwork-live-settings-" + std::to_wstring(GetCurrentProcessId()) + L".ini");
     g.settingsPath = settingsPath.wstring();
+    if ((argc == 2 || argc == 3) && std::string(argv[1]) == "--calendar") {
+        CalendarWindowChecks(argc == 3 ? std::filesystem::path{argv[2]} : std::filesystem::path{});
+        std::filesystem::remove(settingsPath);
+        return 0;
+    }
+    if ((argc == 2 && std::string(argv[1]) == "--resignation") ||
+        (argc == 3 && std::string(argv[1]) == "--resignation-preview")) {
+        if (argc == 3) std::filesystem::create_directories(argv[2]);
+        ResignationEditorPersistsIndependently();
+        ResignationRendersAcrossLocalMidnight(argc == 3 ? argv[2] : std::filesystem::path{});
+        std::filesystem::remove(settingsPath);
+        std::cout << "Resignation editing, rendering and local midnight checks passed.\n";
+        return 0;
+    }
     if (argc == 3 && std::string(argv[1]) == "--ocr-fill") {
         EndTimeEditsApplyBeforeOcrRepopulatesFields();
         OcrSilentlyUpdatesAndSavesTime();
@@ -874,9 +1232,11 @@ int main(int argc, char** argv) {
     g.expanded = true;
     g.focusedField = 4;
     FocusNextField(1);
+    CHECK(g.focusedField == 5);
+    FocusNextField(1);
     CHECK(g.focusedField == 0);
     FocusNextField(-1);
-    CHECK(g.focusedField == 4);
+    CHECK(g.focusedField == 5);
     g.expanded = false;
     g.focusedField = -1;
     // Legacy zero durations remain editable: clear and then restore lunch.

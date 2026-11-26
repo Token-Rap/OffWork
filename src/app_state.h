@@ -30,7 +30,7 @@ inline constexpr UINT_PTR kCaretTimer = 2;
 inline constexpr UINT kCaretBlinkMs = 530;
 inline constexpr std::size_t kTimeMaxLength = 5;
 inline constexpr std::size_t kSalaryMaxLength = 16;
-inline constexpr int kFieldCount = 5;
+inline constexpr int kFieldCount = 6;
 
 inline constexpr wchar_t kDefaultFooter[] = L"v" OFFWORK_VERSION_W L" · 设置和窗口大小保存在本机";
 inline constexpr wchar_t kValidationFooter[] = L"请检查时间、工作时长、午休起止时间和日薪";

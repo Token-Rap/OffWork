@@ -54,6 +54,11 @@ offwork_target_defaults(OffWorkSettingsTests)
 target_link_libraries(OffWorkSettingsTests PRIVATE shell32 ole32)
 add_test(NAME settings COMMAND OffWorkSettingsTests)
 
+add_executable(OffWorkResignationTests tests/resignation_tests.cpp src/settings.cpp)
+offwork_target_defaults(OffWorkResignationTests)
+target_link_libraries(OffWorkResignationTests PRIVATE shell32 ole32)
+add_test(NAME resignation COMMAND OffWorkResignationTests)
+
 add_executable(OffWorkAutostartTests
   tests/autostart_tests.cpp
   src/autostart.cpp
@@ -108,15 +113,19 @@ if(WIN32)
 
   add_executable(OffWorkAppEditTests
     tests/app_edit_tests.cpp
-    src/app_edit.cpp src/app_view.cpp src/app_tray.cpp src/render.cpp
+    src/app_edit.cpp src/app_view.cpp src/app_tray.cpp src/render.cpp src/resignation_calendar.cpp
     src/settings.cpp src/autostart.cpp src/reminder.cpp src/tray_icon.cpp
     src/text_field.cpp src/layered_surface.cpp src/updater.cpp src/update_info.cpp
   )
   offwork_target_defaults(OffWorkAppEditTests)
   target_link_libraries(OffWorkAppEditTests PRIVATE OffWorkOcr
-    advapi32 gdi32 msimg32 ole32 shell32 user32 winhttp)
+    advapi32 comctl32 gdi32 msimg32 ole32 shell32 user32 uxtheme winhttp)
   add_test(NAME app_edit COMMAND OffWorkAppEditTests)
   set_tests_properties(app_edit PROPERTIES TIMEOUT 15)
+  add_test(NAME app_resignation COMMAND OffWorkAppEditTests --resignation)
+  set_tests_properties(app_resignation PROPERTIES TIMEOUT 60)
+  add_test(NAME app_calendar COMMAND OffWorkAppEditTests --calendar)
+  set_tests_properties(app_calendar PROPERTIES TIMEOUT 60)
   add_test(NAME app_ocr_fill COMMAND OffWorkAppEditTests --ocr-fill
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/dingtalk_clockin.png")
   set_tests_properties(app_ocr_fill PROPERTIES TIMEOUT 60)
@@ -136,6 +145,7 @@ if(WIN32)
     src/autostart.cpp
     src/layered_surface.cpp
     src/reminder.cpp
+    src/resignation_calendar.cpp
     src/render.cpp
     src/settings.cpp
     src/text_field.cpp

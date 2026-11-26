@@ -7,6 +7,7 @@
 #include "autostart.h"
 #include "drop_target.h"
 #include "render.h"
+#include "resignation_calendar.h"
 #include "resource.h"
 #include "settings.h"
 #include "theme.h"
@@ -439,6 +440,12 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
 
             const RenderModel model = BuildModel();
             switch (HitTest(client, model)) {
+                case HotElement::ResignationCalendar:
+                    ShowResignationCalendar();
+                    break;
+                case HotElement::ShowResignation:
+                    ToggleShowResignation();
+                    break;
                 case HotElement::HideEarned:
                     g.settings.hideEarned = !g.settings.hideEarned;
                     SaveSettings(g.settingsPath, g.settings);
@@ -488,6 +495,10 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             return 0;
 
         case WM_KEYDOWN:
+            if (g.expanded && g.focusedField == 5 && (wParam == VK_F4 || wParam == VK_DOWN)) {
+                ShowResignationCalendar();
+                return 0;
+            }
             if (wParam == VK_TAB) {
                 const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
                 FocusNextField(shift ? -1 : 1);
@@ -525,7 +536,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 ResetFooter();
             }
             if (index == 1) ApplyLiveEndChange();
-            if (index >= 3) ApplyLiveLunchChange();
+            if (index == 3 || index == 4) ApplyLiveLunchChange();
             g.caretVisible = true;
             SetTimer(window, kCaretTimer, kCaretBlinkMs, nullptr);
             Present();
@@ -542,6 +553,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             return 0;
 
         case WM_DPICHANGED: {
+            CloseResignationCalendar();
             g.dpi = HIWORD(wParam);
             EnsureFonts(0);  // force a rebuild at the new DPI
             const auto* suggested = reinterpret_cast<const RECT*>(lParam);
@@ -559,6 +571,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         }
 
         case WM_CLOSE:
+            CloseResignationCalendar();
             SetFocusedField(-1);
             if (!HideWidgetToTray()) {
                 // Never leave an inaccessible hidden process behind if the
@@ -578,6 +591,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             return 0;
 
         case WM_DESTROY:
+            CloseResignationCalendar();
             g.updater.Stop();
             RevokeDragDrop(window);
             g.screenshotDragActive = false;

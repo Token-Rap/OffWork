@@ -2,6 +2,7 @@
 
 #include "theme.h"
 #include "calculator.h"
+#include "resignation.h"
 
 #include <windows.h>
 #include <shlobj.h>
@@ -44,6 +45,7 @@ bool ReadMinuteSetting(const std::wstring& path, const wchar_t* key, int& minute
 
 Settings NormalizeSettings(const Settings& settings) {
     Settings normalized = settings;
+    if (!ParseResignationDate(normalized.resignationDate)) normalized.resignationDate.clear();
 
     if (settings.endInputMode != EndInputMode::EndTime &&
         settings.endInputMode != EndInputMode::WorkDuration) {
@@ -97,6 +99,11 @@ std::wstring SettingsFilePath() {
 
 Settings LoadSettings(const std::wstring& path) {
     Settings settings;
+    wchar_t resignationDate[32] = {};
+    GetPrivateProfileStringW(L"resignation", L"date", L"", resignationDate,
+        static_cast<DWORD>(std::size(resignationDate)), path.c_str());
+    settings.resignationDate = resignationDate;
+    settings.showResignation = GetPrivateProfileIntW(L"resignation", L"show", 0, path.c_str()) == 1;
     settings.deductLunch = GetPrivateProfileIntW(L"work", L"deductLunch", 0, path.c_str()) == 1;
     settings.hideEarned = GetPrivateProfileIntW(L"window", L"hideEarned", 0, path.c_str()) == 1;
     settings.startMinutes = GetPrivateProfileIntW(
@@ -147,6 +154,8 @@ Settings LoadSettings(const std::wstring& path) {
 
 void SaveSettings(const std::wstring& path, const Settings& settings) {
     const Settings normalized = NormalizeSettings(settings);
+    WritePrivateProfileStringW(L"resignation", L"date", normalized.resignationDate.c_str(), path.c_str());
+    WritePrivateProfileStringW(L"resignation", L"show", normalized.showResignation ? L"1" : L"0", path.c_str());
     WritePrivateProfileStringW(L"window", L"hideEarned", normalized.hideEarned ? L"1" : L"0", path.c_str());
     wchar_t value[64] = {};
 

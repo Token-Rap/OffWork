@@ -22,6 +22,8 @@ struct Settings {
     int opacityPercent = 100;
     bool hideEarned = false;
     bool deductLunch = false; // Display only; earnings always exclude lunch.
+    std::wstring resignationDate; // YYYY-MM-DD, empty means unset.
+    bool showResignation = false; // Hiding preserves the date.
     EndInputMode endInputMode = EndInputMode::WorkDuration;
 };
 

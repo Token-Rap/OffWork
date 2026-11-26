@@ -23,7 +23,7 @@ struct LogicalRect {
 
 inline constexpr int kWindowWidth = 360;
 inline constexpr int kCollapsedHeight = 330;
-inline constexpr int kExpandedHeight = 660;
+inline constexpr int kExpandedHeight = 770;
 inline constexpr int kMinScalePercent = 75;
 inline constexpr int kMaxScalePercent = 150;
 inline constexpr int kMinOpacityPercent = 25;
@@ -64,6 +64,7 @@ inline constexpr LogicalRect kCloseButton{316, 12, 348, 44};
 // -- summary ----------------------------------------------------------------
 
 inline constexpr LogicalRect kStatusText{20, 68, 260, 88};
+inline constexpr LogicalRect kResignationText{150, 68, 340, 88};
 inline constexpr LogicalRect kCountdownText{20, 87, 340, 132};
 inline constexpr LogicalRect kProgressTrackRect{20, 144, 340, 147};
 inline constexpr LogicalRect kProgressText{180, 152, 340, 174};
@@ -79,7 +80,7 @@ inline constexpr int kChevronCenterY = 285;
 
 // -- settings panel ---------------------------------------------------------
 // Two-column fields keep the expanded panel within the existing height.
-inline constexpr LogicalRect kPanel{20, 306, 340, 646};
+inline constexpr LogicalRect kPanel{20, 306, 340, 756};
 inline constexpr LogicalRect kStartLabel{37, 313, 175, 333};
 inline constexpr LogicalRect kStartBox{37, 334, 175, 366};
 inline constexpr LogicalRect kSalaryLabel{191, 313, 323, 333};
@@ -101,8 +102,15 @@ inline constexpr LogicalRect kOpacityHit{37, 536, 323, 564};
 inline constexpr LogicalRect kAutostartLabel{37, 568, 240, 590};
 inline constexpr LogicalRect kAutostartToggle{279, 568, 323, 590};
 inline constexpr LogicalRect kAutostartHit{37, 564, 323, 594};
-inline constexpr LogicalRect kFooterText{37, 630, 323, 644};
-inline constexpr LogicalRect kFooterErrorText{37, 603, 323, 650};
+inline constexpr LogicalRect kResignationDateLabel{37, 600, 323, 620};
+inline constexpr LogicalRect kResignationDateBox{37, 621, 255, 653};
+inline constexpr LogicalRect kResignationCalendarButton{263, 621, 323, 653};
+inline constexpr LogicalRect kResignationToggleLabel{37, 661, 270, 683};
+inline constexpr LogicalRect kResignationToggle{279, 661, 323, 683};
+inline constexpr LogicalRect kResignationHit{37, 657, 323, 687};
+inline constexpr LogicalRect kResignationCoverage{37, 689, 323, 709};
+inline constexpr LogicalRect kFooterText{37, 740, 323, 754};
+inline constexpr LogicalRect kFooterErrorText{37, 716, 323, 763};
 
 // Horizontal padding between an input box edge and its text.
 inline constexpr int kInputPadding = 10;
@@ -124,6 +132,9 @@ enum class HotElement {
     DurationMode,
     Opacity,
     Autostart,
+    ResignationDateField,
+    ResignationCalendar,
+    ShowResignation,
 };
 
 }  // namespace offwork
