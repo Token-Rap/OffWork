@@ -111,6 +111,30 @@ LRESULT CALLBACK CalendarProc(HWND window, UINT message, WPARAM wParam, LPARAM l
             SelectObject(item->hDC, previousFont);
             return TRUE;
         }
+        case WM_HSCROLL:
+        case WM_VSCROLL: {
+            const bool vertical = message == WM_VSCROLL;
+            const int bar = vertical ? SB_VERT : SB_HORZ;
+            SCROLLINFO info{sizeof(info), SIF_ALL};
+            if (!GetScrollInfo(window, bar, &info)) return 0;
+            const int old = info.nPos;
+            switch (LOWORD(wParam)) {
+                case SB_LINEUP: info.nPos -= 16; break;
+                case SB_LINEDOWN: info.nPos += 16; break;
+                case SB_PAGEUP: info.nPos -= static_cast<int>(info.nPage); break;
+                case SB_PAGEDOWN: info.nPos += static_cast<int>(info.nPage); break;
+                case SB_THUMBPOSITION:
+                case SB_THUMBTRACK: info.nPos = info.nTrackPos; break;
+                case SB_TOP: info.nPos = info.nMin; break;
+                case SB_BOTTOM: info.nPos = info.nMax; break;
+                default: return 0;
+            }
+            info.fMask = SIF_POS;
+            const int delta = old - SetScrollInfo(window, bar, &info, TRUE);
+            ScrollWindowEx(window, vertical ? 0 : delta, vertical ? delta : 0, nullptr, nullptr,
+                nullptr, nullptr, SW_SCROLLCHILDREN | SW_INVALIDATE | SW_ERASE);
+            return 0;
+        }
         case WM_COMMAND:
             if (LOWORD(wParam) == IDOK || LOWORD(wParam) == kClear) {
                 SYSTEMTIME date{};
@@ -161,6 +185,17 @@ void ShowResignationCalendar() {
         return;
     }
     SetFocusedField(-1); // Commit any typed draft before locating the saved date.
+    MONITORINFO monitor{sizeof(monitor)};
+    if (!GetMonitorInfoW(MonitorFromWindow(g.window, MONITOR_DEFAULTTONEAREST), &monitor)) return;
+    RECT anchor = ScaleRect(kResignationDateBox, g.settings.uiScalePercent, g.dpi);
+    MapWindowPoints(g.window, nullptr, reinterpret_cast<POINT*>(&anchor), 2);
+    ShowResignationCalendarAt(anchor, monitor.rcWork);
+}
+
+void ShowResignationCalendarAt(const RECT& anchor, const RECT& work) {
+    const int workWidth = work.right - work.left;
+    const int workHeight = work.bottom - work.top;
+    if (popup || workWidth <= 0 || workHeight <= 0) return;
     INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_DATE_CLASSES};
     if (!InitCommonControlsEx(&controls)) return;
     const HINSTANCE instance = GetModuleHandleW(nullptr);
@@ -171,15 +206,12 @@ void ShowResignationCalendar() {
     wc.hbrBackground = nullptr; // WM_ERASEBKGND uses the shared application palette.
     wc.lpszClassName = kCalendarClass;
     if (!RegisterClassW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return;
-    RECT anchor = ScaleRect(kResignationDateBox, g.settings.uiScalePercent, g.dpi);
-    MapWindowPoints(g.window, nullptr, reinterpret_cast<POINT*>(&anchor), 2);
     popup = CreateWindowExW(WS_EX_TOOLWINDOW, kCalendarClass, L"选择离职日期",
-        WS_POPUP, anchor.left, anchor.top, 1, 1, g.window, nullptr, instance, nullptr);
+        WS_POPUP, std::clamp(anchor.left, work.left, work.right - 1),
+        std::clamp(anchor.top, work.top, work.bottom - 1), 1, 1, g.window, nullptr, instance, nullptr);
     if (popup == nullptr) return;
-    const auto px = [](int value) { return ScaleValue(value, g.settings.uiScalePercent, g.dpi); };
-    font = CreateFontW(-px(14), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH, L"Segoe UI");
+    int scale = g.settings.uiScalePercent;
+    const auto px = [&](int value) { return ScaleValue(value, scale, g.dpi); };
     calendar = CreateWindowExW(0, MONTHCAL_CLASSW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP |
         MCS_NOTODAYCIRCLE, px(8), px(8), 1, 1, popup, nullptr, instance, nullptr);
     if (calendar == nullptr) { CloseResignationCalendar(); return; }
@@ -191,7 +223,6 @@ void ShowResignationCalendar() {
     MonthCal_SetColor(calendar, MCSC_TITLETEXT, kTextPrimary);
     MonthCal_SetColor(calendar, MCSC_TEXT, kTextPrimary);
     MonthCal_SetColor(calendar, MCSC_TRAILINGTEXT, kTextMuted);
-    SendMessageW(calendar, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
     SYSTEMTIME range[2]{};
     range[0].wYear = 1601; range[0].wMonth = 1; range[0].wDay = 1;
     range[1].wYear = 9999; range[1].wMonth = 12; range[1].wDay = 31;
@@ -206,10 +237,27 @@ void ShowResignationCalendar() {
         if (date.wYear < 1601) date = range[0];
     }
     MonthCal_SetCurSel(calendar, &date);
-    RECT size{};
-    MonthCal_GetMinReqRect(calendar, &size);
-    const int width = std::max(static_cast<int>(size.right), px(240));
-    const int height = size.bottom;
+    // MonthCal's minimum includes native metrics and depends on the selected font.
+    // Re-measure after shrinking so its last row and the footer stay accessible.
+    int width, height, contentWidth, contentHeight;
+    const int minimumScale = std::min(scale, std::max(1, MulDiv(100, 96, g.dpi)));
+    for (;;) {
+        HFONT nextFont = CreateFontW(-px(14), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+            DEFAULT_PITCH, L"Segoe UI");
+        SendMessageW(calendar, WM_SETFONT, reinterpret_cast<WPARAM>(nextFont), FALSE);
+        if (font) DeleteObject(font);
+        font = nextFont;
+        RECT size{};
+        if (!MonthCal_GetMinReqRect(calendar, &size)) { CloseResignationCalendar(); return; }
+        width = std::max(static_cast<int>(size.right), px(240));
+        height = size.bottom;
+        contentWidth = width + px(16);
+        contentHeight = height + px(16) + px(30) + px(8);
+        if ((contentWidth <= workWidth && contentHeight <= workHeight) || scale == minimumScale) break;
+        scale = std::max(minimumScale, std::min({scale - 1,
+            scale * workWidth / contentWidth, scale * workHeight / contentHeight}));
+    }
     SetWindowPos(calendar, nullptr, px(8), px(8), width, height, SWP_NOZORDER);
     previousMonth = nextMonth = RECT{};
     for (int y = 0; y < height / 3; ++y) {
@@ -241,17 +289,35 @@ void ShowResignationCalendar() {
         SendMessageW(button, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         SetWindowSubclass(button, ChildProc, 1, 0);
     }
-    MONITORINFO monitor{sizeof(monitor)};
-    GetMonitorInfoW(MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST), &monitor);
-    RECT bounds{0, 0, width + px(16), height + px(54)};
-    AdjustWindowRectExForDpi(&bounds, WS_POPUP, FALSE, WS_EX_TOOLWINDOW, g.dpi);
-    const int w = bounds.right - bounds.left;
-    const int h = bounds.bottom - bounds.top;
-    const RECT work = monitor.rcWork;
+    // A borderless popup's outer and client sizes agree until it needs scrollbars.
+    const UINT windowDpi = GetDpiForWindow(popup);
+    const int vBar = GetSystemMetricsForDpi(SM_CXVSCROLL, windowDpi);
+    const int hBar = GetSystemMetricsForDpi(SM_CYHSCROLL, windowDpi);
+    bool vertical = contentHeight > workHeight;
+    const bool horizontal = contentWidth + (vertical ? vBar : 0) > workWidth;
+    vertical = contentHeight + (horizontal ? hBar : 0) > workHeight;
+    const int w = std::min(contentWidth + (vertical ? vBar : 0), workWidth);
+    const int h = std::min(contentHeight + (horizontal ? hBar : 0), workHeight);
     const int x = std::clamp(anchor.left, work.left, std::max(work.left, work.right - w));
     const LONG preferredY = anchor.bottom + h <= work.bottom ? anchor.bottom : anchor.top - h;
     const int y = std::clamp(preferredY, work.top, std::max(work.top, work.bottom - h));
-    SetWindowPos(popup, HWND_TOP, x, y, w, h, SWP_SHOWWINDOW);
+    if (horizontal || vertical) {
+        SetWindowLongPtrW(popup, GWL_STYLE, GetWindowLongPtrW(popup, GWL_STYLE) |
+            (horizontal ? WS_HSCROLL : 0) | (vertical ? WS_VSCROLL : 0));
+    }
+    SetWindowPos(popup, HWND_TOP, x, y, w, h, SWP_FRAMECHANGED);
+    if (horizontal || vertical) {
+        RECT client{};
+        GetClientRect(popup, &client);
+        SCROLLINFO info{sizeof(info), SIF_RANGE | SIF_PAGE};
+        info.nMax = contentWidth - 1;
+        info.nPage = client.right;
+        if (horizontal) SetScrollInfo(popup, SB_HORZ, &info, TRUE);
+        info.nMax = contentHeight - 1;
+        info.nPage = client.bottom;
+        if (vertical) SetScrollInfo(popup, SB_VERT, &info, TRUE);
+    }
+    ShowWindow(popup, SW_SHOW);
     SetFocus(calendar);
 }
 

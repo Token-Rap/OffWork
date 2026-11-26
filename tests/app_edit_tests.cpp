@@ -1112,6 +1112,29 @@ void CalendarWindowChecks(const std::filesystem::path& previews = {}) {
             }
         }
     }
+    // Synthetic work areas keep compact layout and scrolling covered on large monitors too.
+    g.dpi = 192;
+    g.settings.uiScalePercent = 150;
+    for (const int workHeight : {360, 96}) {
+        const RECT work{monitor.rcWork.left, monitor.rcWork.top,
+            monitor.rcWork.left + 400, monitor.rcWork.top + workHeight};
+        const RECT anchor{work.right - 30, work.bottom - 5, work.right, work.bottom};
+        ShowResignationCalendarAt(anchor, work);
+        window = FindWindowW(L"OffWork.ResignationCalendar", nullptr);
+        RECT bounds{}, button{};
+        CHECK(window && GetWindowRect(window, &bounds));
+        CHECK(bounds.left >= work.left && bounds.right == work.right);
+        CHECK(bounds.top >= work.top && bounds.bottom <= work.bottom);
+        if (workHeight == 96) {
+            CHECK((GetWindowLongPtrW(window, GWL_STYLE) & WS_VSCROLL) != 0);
+            SendMessageW(window, WM_VSCROLL, SB_BOTTOM, 0);
+        } else {
+            CHECK((GetWindowLongPtrW(window, GWL_STYLE) & WS_VSCROLL) == 0);
+        }
+        CHECK(GetWindowRect(GetDlgItem(window, 100), &button));
+        CHECK(button.top >= bounds.top && button.bottom < bounds.bottom);
+        CloseResignationCalendar();
+    }
     g.dpi = GetDpiForWindow(g.window);
     g.settings.uiScalePercent = 100;
     std::tie(window, cal) = open();
