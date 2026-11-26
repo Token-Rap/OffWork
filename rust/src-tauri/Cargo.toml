@@ -19,4 +19,5 @@ offwork-core= {path="../core"}
 tempfile="3"
 
 [target.'cfg(windows)'.dependencies]
-windows= {version="0.61",features= ["Foundation", "Foundation_Collections", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage", "Storage_Streams"] }
+dunce = "1"
+windows= {version="0.61",features= ["Foundation", "Foundation_Collections", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage", "Storage_Streams","Win32_System_WinRT"] }

@@ -8,10 +8,10 @@ char *offwork_vision(const char *path) {
   NSURL *url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path]];
   VNRecognizeTextRequest *request = [[VNRecognizeTextRequest alloc] init];
   request.recognitionLevel = VNRequestTextRecognitionLevelAccurate;
-  NSArray *supported = [request supportedRecognitionLanguagesAndReturnError:nil];
+  NSArray *supported = [request supportedRecognitionLanguagesAndReturnError:NULL];
   if ([supported containsObject:@"zh-Hans"]) request.recognitionLanguages = @[@"zh-Hans",@"en-US"];
   VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithURL:url options:@{}];
-  if (![handler performRequests:@[request] error:nil]) return NULL;
+  if (![handler performRequests:@[request] error:NULL]) return NULL;
   NSMutableArray *lines = [NSMutableArray array];
   for (VNRecognizedTextObservation *row in request.results) {
    NSString *line = [[row topCandidates:1] firstObject].string;

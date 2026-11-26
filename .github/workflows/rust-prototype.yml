@@ -40,7 +40,7 @@ jobs:
       - if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libfuse2t64 tesseract-ocr tesseract-ocr-chi-sim xvfb dbus-x11
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libfuse2t64 tesseract-ocr tesseract-ocr-chi-sim xvfb dbus-x11 xdotool python3-gi gir1.2-gtk-3.0
           dpkg-query -W -f='${Package} ${Installed-Size} KiB\n' tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng libwebkit2gtk-4.1-0 libayatana-appindicator3-1
       - run: npm ci
       - run: npm run check
@@ -49,6 +49,8 @@ jobs:
       - run: cargo clippy --release --workspace --all-targets --locked -- -D warnings
       - run: cargo test --release --workspace --locked
       - run: npm run tauri build -- --bundles ${{ matrix.bundles }}
+      - if: runner.os == 'Linux'
+        run: dbus-run-session -- xvfb-run -a /usr/bin/python3 scripts/x11_drop.py
       - run: python scripts/package_report.py
       - uses: actions/setup-python@v5
         with:
@@ -58,6 +60,17 @@ jobs:
         run: dbus-run-session -- xvfb-run -a python scripts/measure.py target/release/offwork artifacts/runtime.json --seconds 30
       - if: runner.os == 'Windows'
         run: python scripts/measure.py target/release/offwork.exe artifacts/runtime.json --seconds 30
+      - if: runner.os == 'Windows'
+        name: Compare the existing native widget on the same runner
+        run: |
+          cmake -S .. -B target/legacy -A x64
+          cmake --build target/legacy --config Release --target OffWork --parallel
+          python scripts/measure.py target/legacy/Release/OffWork.exe artifacts/legacy-runtime.json --legacy-windows --seconds 30
+          $runtime = Get-ChildItem "${env:ProgramFiles(x86)}/Microsoft/EdgeWebView/Application" -Directory | Where-Object Name -Match '^\d' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($runtime) {
+            $bytes = (Get-ChildItem $runtime.FullName -Recurse -File | Measure-Object Length -Sum).Sum
+            "WebView2 $($runtime.Name) $bytes bytes" | Tee-Object artifacts/host-runtime.txt
+          }
       - if: runner.os == 'macOS'
         run: |
           test "$(uname -m)" = arm64

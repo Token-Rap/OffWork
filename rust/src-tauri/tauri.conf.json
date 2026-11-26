@@ -14,7 +14,7 @@
       {
         "title": "下班手账",
         "width": 360,
-        "height": 336,
+        "height": 384,
         "minWidth": 320,
         "minHeight": 300,
         "decorations": false,
@@ -34,6 +34,7 @@
       "icons/icon.icns"
     ],
     "category": "Productivity",
+    "macOS": {"minimumSystemVersion":"12.0"},
     "linux": {
       "deb": {
         "recommends": [

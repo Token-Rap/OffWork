@@ -14,9 +14,9 @@ import psutil
 
 def coalition(pid):
     # Darwin's resource coalition includes out-of-process WebKit XPC services.
-    ids = (ctypes.c_uint64 * 2)()
+    ids = (ctypes.c_uint64 * 5)()
     copied = libproc.proc_pidinfo(pid, 20, 0, ids, ctypes.sizeof(ids))
-    return ids[0] if copied >= 8 else None
+    return ids[0] if copied == ctypes.sizeof(ids) else None
 
 if sys.platform == "darwin":
     libproc = ctypes.CDLL("/usr/lib/libproc.dylib")
@@ -39,16 +39,17 @@ def sample(root):
             continue
     return rss, cpu
 
-def wait_marker(path, process):
+def wait_until(condition, process, label):
     deadline = time.monotonic() + 45
-    while not path.exists():
+    while not condition():
         if process.poll() is not None or time.monotonic() > deadline:
-            raise RuntimeError(f"Missing {path.name}, process status {process.poll()}")
+            raise RuntimeError(f"Timed out waiting for {label}, process status {process.poll()}")
         time.sleep(.005)
 
 parser = argparse.ArgumentParser()
 parser.add_argument("binary",type=Path)
 parser.add_argument("output",type=Path)
+parser.add_argument("--legacy-windows",action="store_true")
 parser.add_argument("--seconds",type=int,default=600)
 args = parser.parse_args()
 with tempfile.TemporaryDirectory() as temp:
@@ -56,13 +57,29 @@ with tempfile.TemporaryDirectory() as temp:
     started = time.perf_counter()
     proc = subprocess.Popen([str(args.binary.resolve())],env={**os.environ,"OFFWORK_MEASURE":temp})
     try:
-        wait_marker(folder/"frame", proc)
-        result = {"launch_to_second_raf_ms":round((time.perf_counter()-started)*1000), "seconds_per_state":args.seconds}
+        if args.legacy_windows:
+            user32=ctypes.windll.user32
+            user32.FindWindowW.restype=ctypes.c_void_p
+            def legacy_visible():
+                handle=user32.FindWindowW("OffWork.Native.Widget",None)
+                if not handle: return False
+                owner=ctypes.c_ulong()
+                user32.GetWindowThreadProcessId(ctypes.c_void_p(handle),ctypes.byref(owner))
+                return owner.value==proc.pid and user32.IsWindowVisible(ctypes.c_void_p(handle))
+            wait_until(legacy_visible,proc,"legacy window")
+        else:
+            wait_until((folder/"frame").exists,proc,"first frame")
+        result = {("launch_to_visible_window_ms" if args.legacy_windows else "launch_to_second_raf_ms"):round((time.perf_counter()-started)*1000), "seconds_per_state":args.seconds}
         root = psutil.Process(proc.pid)
         for state in ("visible","hidden"):
             if state == "hidden":
-                (folder/"hide").touch()
-                wait_marker(folder/"hidden",proc)
+                if args.legacy_windows:
+                    handle=user32.FindWindowW("OffWork.Native.Widget",None)
+                    user32.PostMessageW(ctypes.c_void_p(handle),0x10,0,0)
+                    wait_until(lambda:not legacy_visible(),proc,"legacy window hidden")
+                else:
+                    (folder/"hide").touch()
+                    wait_until((folder/"hidden").exists,proc,"hidden window")
             start = time.perf_counter()
             _, previous = sample(root)
             usage = 0
@@ -70,6 +87,7 @@ with tempfile.TemporaryDirectory() as temp:
             pids = set(previous)
             while time.perf_counter()-start < args.seconds:
                 time.sleep(min(5,max(0,args.seconds-(time.perf_counter()-start))))
+                if proc.poll() is not None: raise RuntimeError(f"App exited during {state} sampling")
                 rss,counts = sample(root)
                 usage += sum(max(0,count-previous.get(pid,0)) for pid,count in counts.items())
                 previous = counts

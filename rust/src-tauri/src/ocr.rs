@@ -38,7 +38,7 @@ fn read(path: &Path) -> Result<String, String> {
     use windows::{
         core::HSTRING,
         Globalization::Language,
-        Graphics::Imaging::BitmapDecoder,
+        Graphics::Imaging::{BitmapAlphaMode, BitmapDecoder, BitmapPixelFormat},
         Media::Ocr::OcrEngine,
         Storage::{FileAccessMode, StorageFile},
     };
@@ -46,7 +46,16 @@ fn read(path: &Path) -> Result<String, String> {
         let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(path.as_os_str()))?.get()?;
         let stream = file.OpenAsync(FileAccessMode::Read)?.get()?;
         let decoder = BitmapDecoder::CreateAsync(&stream)?.get()?;
-        let bitmap = decoder.GetSoftwareBitmapAsync()?.get()?;
+        let limit = OcrEngine::MaxImageDimension()?;
+        if decoder.PixelWidth()? > limit || decoder.PixelHeight()? > limit {
+            return Err(windows::core::Error::new(
+                windows::core::HRESULT(0x80070057u32 as i32),
+                "请裁剪截图后重试",
+            ));
+        }
+        let bitmap = decoder
+            .GetSoftwareBitmapConvertedAsync(BitmapPixelFormat::Bgra8, BitmapAlphaMode::Ignore)?
+            .get()?;
         let engine = Language::CreateLanguage(&HSTRING::from("zh-Hans"))
             .and_then(|lang| OcrEngine::TryCreateFromLanguage(&lang))
             .or_else(|_| OcrEngine::TryCreateFromUserProfileLanguages())?;
@@ -57,7 +66,13 @@ fn read(path: &Path) -> Result<String, String> {
         }
         Ok(lines.join("\n"))
     }
-    recognize(path).map_err(|e| format!("系统识别失败，请检查 OCR 语言包（{e}）"))
+    use windows::Win32::System::WinRT::{RoInitialize, RoUninitialize, RO_INIT_MULTITHREADED};
+    let absolute = dunce::canonicalize(path).map_err(|e| e.to_string())?;
+    // This adapter runs on a dedicated worker thread. Balance every successful initialization.
+    unsafe { RoInitialize(RO_INIT_MULTITHREADED) }.map_err(|e| e.to_string())?;
+    let result = recognize(&absolute);
+    unsafe { RoUninitialize() };
+    result.map_err(|e| format!("系统识别失败，请检查 OCR 语言包（{e}）"))
 }
 pub fn recognize(path: &Path) -> Result<i32, String> {
     let ext = path

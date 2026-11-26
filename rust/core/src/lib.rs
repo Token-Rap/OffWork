@@ -126,3 +126,5 @@ impl Settings {
     }
 }
 pub mod ocr;
+
+pub mod reminder;
