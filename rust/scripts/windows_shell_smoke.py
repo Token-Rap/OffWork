@@ -37,7 +37,13 @@ def window(pid, cls, title=None, visible=False):
 
 
 def activate_and_quit(app, measure):
+    wait_for(lambda: any((measure / name).exists() for name in ("toast.json", "toast-error", "portable-reminder")),
+             "Windows reminder delivery result")
+    if not (measure / "toast.json").exists():
+        error = measure / "toast-error"
+        raise AssertionError(error.read_text() if error.exists() else "installed EXE selected portable notification")
     report = json.loads((measure / "toast.json").read_text(encoding="utf-8"))
+    print("Windows notification broker:", report, flush=True)
     shortcut_id = subprocess.check_output(["powershell", "-NoProfile", "-Command", """
         $folder = (New-Object -ComObject Shell.Application).NameSpace([Environment]::GetFolderPath('Programs'))
         $folder.ParseName('OffWork.lnk').ExtendedProperty('System.AppUserModel.ID')
@@ -46,9 +52,9 @@ def activate_and_quit(app, measure):
     toast = ElementTree.fromstring(report["xml"])
     assert toast.get("activationType") == "protocol" and toast.get("launch") == "offwork-reminder:show"
     assert toast.find("visual/binding/text[2]").text == "还有五分钟下班"
-    assert not window(app.pid, None, "OffWork", visible=True)
+    assert not window(app.pid, "Tauri Window", visible=True)
     os.startfile(toast.attrib["launch"])
-    wait_for(lambda: window(app.pid, None, "OffWork", visible=True), "protocol restoring hidden window")
+    wait_for(lambda: window(app.pid, "Tauri Window", visible=True), "protocol restoring hidden window")
 
     children = psutil.Process(app.pid).children(recursive=True)
     assert any(p.name().lower() == "msedgewebview2.exe" for p in children)

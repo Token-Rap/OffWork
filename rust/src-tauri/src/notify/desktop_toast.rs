@@ -1,5 +1,6 @@
 //! Installed builds use the Start menu identity and a fixed protocol activation.
 //! A portable copy may coexist with the install and uses its own tray instead.
+use std::path::Path;
 use tauri::AppHandle;
 use windows::core::{Result, HSTRING};
 use windows::Data::Xml::Dom::XmlDocument;
@@ -50,22 +51,22 @@ fn toast(id: &str, message: &str) -> Result<()> {
         .SetInnerText(&HSTRING::from(message))?;
     let notification = ToastNotification::CreateToastNotification(&xml)?;
     let notifier = ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(id))?;
-    let setting = notifier.Setting()?;
-    if setting == NotificationSetting::Enabled {
-        // Windows itself applies Focus Assist / Do Not Disturb at delivery.
-        notifier.Show(&notification)?;
-    } else {
-        eprintln!("Windows notifications disabled for {id}: {setting:?}");
-    }
+    let setting = notifier.Setting();
+    // On some hosts notification settings are unavailable. Show still goes
+    // through the Windows broker, which enforces the user's policy.
+    let delivery = match &setting {
+        Ok(s) if *s != NotificationSetting::Enabled => Ok("disabled"),
+        _ => notifier.Show(&notification).map(|()| "submitted"),
+    };
     if let Some(dir) = std::env::var_os("OFFWORK_MEASURE") {
         let report = serde_json::json!({"aumid": id, "xml": notification.Content()?.GetXml()?.to_string(),
-            "notification_setting": setting.0});
-        let _ = std::fs::write(
-            std::path::Path::new(&dir).join("toast.json"),
-            report.to_string(),
-        );
+            "setting": format!("{setting:?}"), "delivery": format!("{delivery:?}")});
+        let _ = std::fs::write(Path::new(&dir).join("toast.json"), report.to_string());
     }
-    Ok(())
+    if let Ok("disabled") = delivery {
+        eprintln!("Windows notifications disabled for {id}: {setting:?}");
+    }
+    delivery.map(|_| ())
 }
 
 pub fn notify(app: &AppHandle, message: &str) {
@@ -82,9 +83,15 @@ pub fn notify(app: &AppHandle, message: &str) {
             });
             if let Err(error) = result {
                 eprintln!("Windows toast failed: {error}");
+                if let Some(dir) = std::env::var_os("OFFWORK_MEASURE") {
+                    let _ = std::fs::write(Path::new(&dir).join("toast-error"), error.to_string());
+                }
             }
         });
     } else {
+        if let Some(dir) = std::env::var_os("OFFWORK_MEASURE") {
+            let _ = std::fs::write(Path::new(&dir).join("portable-reminder"), []);
+        }
         let wide: Vec<u16> = message.encode_utf16().chain(Some(0)).collect();
         let _ = app.run_on_main_thread(move || {
             if unsafe { offwork_notify(wide.as_ptr()) } == 0 {
