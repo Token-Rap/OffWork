@@ -469,6 +469,8 @@
   }
   .frame {
     width: 100%;
+    max-width: 100%;
+    overflow: hidden;
   }
   /* The window, not a fixed number, decides the height: Rust zooms the web
      view to the scale and never makes the window taller than the monitor
@@ -476,6 +478,8 @@
      (e.g. 150 % on 1920x1080). */
   main {
     position: relative;
+    width: 100%;
+    max-width: 100%;
     height: 100vh;
     display: flex;
     flex-direction: column;
@@ -639,14 +643,24 @@
     margin-top: 0;
     flex: 1 1 auto;
     min-width: 0;
-    min-height: 160px;
+    /* Shrink below the old 160px floor so a short 150% window still keeps
+       the panel inside the viewport; the panel scrolls instead. */
+    min-height: 0;
     max-width: 100%;
+    width: 100%;
     overflow-x: hidden;
     overflow-y: auto;
     overscroll-behavior: contain;
-    /* Reserve the vertical scrollbar so content width does not jump and
-       force a horizontal bar when the panel starts scrolling. */
+    /* Inline-size containment: children cannot widen the panel (the old
+       nested body+panel scrollers then each grew an h-bar). Gutter keeps
+       the vertical scrollbar from stealing width after layout. */
+    contain: inline-size;
     scrollbar-gutter: stable;
+  }
+  .panel > :global(*) {
+    max-width: 100%;
+    min-width: 0;
+    overflow-x: hidden;
   }
   @media (prefers-reduced-motion: no-preference) {
     .panel {
@@ -706,19 +720,32 @@
   .pair {
     display: flex;
     gap: 6px;
+    min-width: 0;
+    max-width: 100%;
+  }
+  /* width:100% + sibling button overflowed the row by a few px. */
+  .pair input {
+    flex: 1 1 0;
+    width: 0;
   }
   .pair button,
   .mode button {
     border: 1px solid #aaa994;
     white-space: nowrap;
+    flex: 0 0 auto;
   }
   .mode div {
     display: flex;
     gap: 4px;
+    min-width: 0;
+    max-width: 100%;
   }
   .mode button {
-    flex: 1;
+    flex: 1 1 0;
+    min-width: 0;
     padding: 4px 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .mode [aria-checked="true"] {
     background: #385542;
@@ -728,6 +755,8 @@
     display: flex;
     align-items: center;
     gap: 6px;
+    min-width: 0;
+    max-width: 100%;
   }
   input[type="range"] {
     width: 100%;
