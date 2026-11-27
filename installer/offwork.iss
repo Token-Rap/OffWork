@@ -41,7 +41,11 @@ DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 DisableDirPage=no
+#ifdef WebView2Bootstrapper
+AllowNoIcons=no
+#else
 AllowNoIcons=yes
+#endif
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
@@ -142,10 +146,23 @@ Source: "{#WebView2Bootstrapper}"; DestName: "MicrosoftEdgeWebview2Setup.exe"; F
 #endif
 
 [Icons]
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
+#ifdef WebView2Bootstrapper
+; Unpackaged toast with protocol activation. The stub CLSID keeps the toast
+; in Action Center; the protocol launches OffWork even after it has exited.
+#define ShortcutIdentity "; AppUserModelID: io.github.token-rap.offwork; AppUserModelToastActivatorCLSID: 7C510C54-6261-46B8-B99B-A20299D417C9"
+#else
+#define ShortcutIdentity ""
+#endif
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"{#ShortcutIdentity}
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon{#ShortcutIdentity}
 
 [Registry]
+#ifdef WebView2Bootstrapper
+Root: HKCU; Subkey: "Software\Classes\offwork-reminder"; ValueType: string; ValueData: "URL:OffWork reminder"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\offwork-reminder"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+; The URI carries no user arguments. Starting a second instance restores the first.
+Root: HKCU; Subkey: "Software\Classes\offwork-reminder\shell\open\command"; ValueType: string; ValueData: """{app}\{#AppExeName}"""
+#endif
 ; The app reads and writes this exact key and value name (src/autostart.h), and
 ; stores the path quoted so a directory with spaces still launches.
 Root: HKCU; Subkey: "{#RunKey}"; ValueType: string; ValueName: "{#RunValueName}"; \

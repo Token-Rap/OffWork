@@ -7,6 +7,10 @@ mod commands;
 mod model;
 mod notify;
 mod ocr;
+#[cfg(not(windows))]
+mod tray;
+#[cfg(windows)]
+#[path = "windows_tray.rs"]
 mod tray;
 mod updater;
 mod window;
@@ -113,7 +117,11 @@ mod legacy {
         // Leave the window procedure before touching Tauri windows.
         std::thread::spawn(move || match kind {
             1 => crate::window::show(&app),
-            2 => app.exit(0),
+            2 => crate::tray::quit(&app),
+            3 => {
+                crate::window::hide(&app);
+            }
+            4 => crate::tray::toggle_autostart(&app),
             _ => {}
         });
     }
@@ -165,10 +173,10 @@ fn main() {
             let scale = loaded.settings.scale_percent;
             app.manage(Model::new(path, loaded));
             app.manage(updater::UpdateState(Default::default()));
-            let has_tray = tray::build(app).is_ok() && tray::host_available();
-            app.state::<Model>().tray.store(has_tray, Ordering::SeqCst);
             #[cfg(windows)]
             legacy::install(&handle);
+            let has_tray = tray::build(app).is_ok() && tray::host_available();
+            app.state::<Model>().tray.store(has_tray, Ordering::SeqCst);
             let w = app
                 .get_webview_window("main")
                 .ok_or("main window missing")?;

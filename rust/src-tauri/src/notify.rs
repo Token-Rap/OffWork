@@ -32,26 +32,10 @@ pub fn notify(app: &AppHandle, message: &str) {
     }
 }
 
-/// Shell balloons work for the portable EXE without an installed
-/// AppUserModelID; a click arrives as NIN_BALLOONUSERCLICK in balloon.c.
 #[cfg(windows)]
-pub fn notify(app: &AppHandle, message: &str) {
-    use tauri::Manager;
-    record(message);
-    extern "C" {
-        fn offwork_notify(window: *mut std::ffi::c_void, message: *const u16) -> i32;
-    }
-    let wide: Vec<u16> = message.encode_utf16().chain(Some(0)).collect();
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = app.run_on_main_thread(move || {
-            if let Ok(hwnd) = window.hwnd() {
-                if unsafe { offwork_notify(hwnd.0, wide.as_ptr()) } == 0 {
-                    eprintln!("Shell notification failed");
-                }
-            }
-        });
-    }
-}
+mod desktop_toast;
+#[cfg(windows)]
+pub use desktop_toast::notify;
 
 /// Registers the click handler before anything is shown.
 pub fn init(app: &AppHandle) {
@@ -64,5 +48,5 @@ pub fn init(app: &AppHandle) {
             .on_action(move |_| crate::window::show(&handle));
     }
     #[cfg(windows)]
-    let _ = app;
+    desktop_toast::set_identity(app);
 }

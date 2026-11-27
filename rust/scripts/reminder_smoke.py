@@ -53,6 +53,9 @@ with tempfile.TemporaryDirectory() as temp:
         assert len(lines) == 1 and lines[0].endswith("还有五分钟下班"), lines
         fired = dt.datetime.combine(boundary.date(), dt.time.fromisoformat(lines[0].split()[0]))
         assert abs((fired - boundary).total_seconds()) <= 2, (fired, boundary)
+        if "--installed-shell" in sys.argv:
+            from windows_shell_smoke import activate_and_quit
+            activate_and_quit(app, measure)
     finally:
         app.terminate()
         app.wait(timeout=15)

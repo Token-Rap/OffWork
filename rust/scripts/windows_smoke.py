@@ -142,6 +142,15 @@ def main(new_setup: Path) -> None:
     results["relaunched_after"] = wait(lambda: window_pid() not in (None, rust_pid), "relaunch")
     assert json.loads(settings.read_text(encoding="utf-8")) == expected
 
+    # Exercise a reminder from the installed binary and its real Start shortcut.
+    user32.PostMessageW(ctypes.c_void_p(user32.FindWindowW(CLASS, "OffWork")), 0x16, 1, 0)
+    wait(lambda: not processes(), "installed app exit before reminder test")
+    subprocess.run([sys.executable, "scripts/reminder_smoke.py", str(program), "--installed-shell"],
+                   check=True, timeout=300)
+    results["installed_toast_activation_and_tray_quit"] = True
+    subprocess.Popen([str(program)])
+    wait(lambda: window_pid() is not None, "running app before uninstall")
+
     uninstaller = program.parent / "unins000.exe"
     code = subprocess.run([str(uninstaller), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], timeout=120).returncode
     results["uninstall_exit_code"] = code

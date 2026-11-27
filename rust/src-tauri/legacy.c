@@ -80,7 +80,6 @@ int offwork_legacy_window(offwork_event on_event) {
     return window != NULL;
 }
 
-/* Balloon clicks restore through the same path. */
-void offwork_legacy_restore(void) {
-    if (callback) callback(1);
+void offwork_tray_command(int command) {
+    if (callback) callback(command);
 }
