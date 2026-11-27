@@ -26,10 +26,12 @@ fn read(path: &Path) -> Result<String, String> {
         .args(["stdout", "-l", "chi_sim+eng", "--psm", "6"])
         .output()
         .map_err(|_| "请安装 tesseract-ocr 和 tesseract-ocr-chi-sim")?;
-    if !output.status.success()
-        || String::from_utf8_lossy(&output.stderr).contains("Failed loading language")
-    {
-        return Err("请检查图片和 Tesseract 中英文语言包".into());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.contains("Failed loading language") {
+        return Err("缺少 Tesseract 中文语言包，请安装 tesseract-ocr-chi-sim".into());
+    }
+    if !output.status.success() {
+        return Err("图片无法识别，请换用清晰截图".into());
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
@@ -74,23 +76,96 @@ fn read(path: &Path) -> Result<String, String> {
     unsafe { RoUninitialize() };
     result.map_err(|e| format!("系统识别失败，请检查 OCR 语言包（{e}）"))
 }
-pub fn recognize(path: &Path) -> Result<i32, String> {
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    if !matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "bmp") {
+pub const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
+
+/// Validates the drop before any engine runs: one supported image file of a
+/// sane size. Every error is a readable sentence for the settings footer.
+pub fn check(paths: &[std::path::PathBuf]) -> Result<&Path, String> {
+    let [path] = paths else {
+        return Err("请一次只拖入一张打卡截图".into());
+    };
+    if path.is_dir() {
+        return Err("请拖入图片文件，而不是文件夹".into());
+    }
+    if !offwork_core::image_file::is_supported(&path.to_string_lossy()) {
         return Err("请拖入一张 PNG、JPEG 或 BMP 图片".into());
     }
-    let meta = path.metadata().map_err(|_| "无法读取图片")?;
-    if !meta.is_file() || meta.len() > 20 * 1024 * 1024 {
-        return Err("图片须小于 20 MiB".into());
+    let meta = path
+        .metadata()
+        .map_err(|_| "无法读取图片，请确认文件仍然存在")?;
+    if !meta.is_file() || meta.len() == 0 {
+        return Err("图片文件为空或无效".into());
     }
-    offwork_core::ocr::clock_in(&read(path)?).ok_or("未识别到打卡时间，请手动填写".into())
+    if meta.len() > MAX_IMAGE_BYTES {
+        return Err("图片须小于 20 MiB，请裁剪后重试".into());
+    }
+    Ok(path)
 }
-#[test]
-fn native_fixture() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/data/dingtalk_clockin.png");
-    assert_eq!(recognize(&path).unwrap(), 535);
+
+pub fn recognize(path: &Path) -> Result<i32, String> {
+    check(std::slice::from_ref(&path.to_path_buf()))?;
+    offwork_core::ocr::clock_in(&read(path)?)
+        .ok_or_else(|| "未识别到上班打卡时间，请手动填写".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn native_fixture() {
+        let path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/data/dingtalk_clockin.png");
+        assert_eq!(recognize(&path).unwrap(), 535);
+    }
+
+    #[test]
+    fn rejected_drops_have_readable_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let png = dir.path().join("a.png");
+        std::fs::write(&png, b"x").unwrap();
+        let two = [png.clone(), png.clone()];
+        assert!(check(&two).unwrap_err().contains("一张"));
+        assert!(check(&[]).unwrap_err().contains("一张"));
+        let folder = dir.path().join("shots.png");
+        std::fs::create_dir(&folder).unwrap();
+        assert!(check(&[folder]).unwrap_err().contains("文件夹"));
+        let gif = dir.path().join("a.gif");
+        std::fs::write(&gif, b"GIF89a").unwrap();
+        assert!(check(&[gif]).unwrap_err().contains("PNG"));
+        assert!(check(&[dir.path().join("missing.png")])
+            .unwrap_err()
+            .contains("无法读取"));
+        let empty = dir.path().join("empty.jpg");
+        std::fs::write(&empty, b"").unwrap();
+        assert!(check(&[empty]).unwrap_err().contains("为空"));
+        let big = dir.path().join("big.bmp");
+        std::fs::File::create(&big)
+            .unwrap()
+            .set_len(MAX_IMAGE_BYTES + 1)
+            .unwrap();
+        assert!(check(&[big]).unwrap_err().contains("20 MiB"));
+        assert_eq!(check(std::slice::from_ref(&png)).unwrap(), png.as_path());
+    }
+
+    #[test]
+    fn corrupt_image_is_an_error_not_a_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let bad: PathBuf = dir.path().join("corrupt.png");
+        std::fs::write(&bad, b"\x89PNG\r\n\x1a\nthis is not an image").unwrap();
+        let error = recognize(&bad).unwrap_err();
+        assert!(!error.is_empty(), "{error}");
+    }
+
+    #[test]
+    fn image_without_a_clock_in_time_asks_for_manual_entry() {
+        // The app icon has no text at all.
+        let icon = Path::new(env!("CARGO_MANIFEST_DIR")).join("icons/128x128.png");
+        let error = recognize(&icon).unwrap_err();
+        assert!(
+            error.contains("手动填写") || error.contains("识别"),
+            "{error}"
+        );
+    }
 }

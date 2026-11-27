@@ -1,319 +1,403 @@
 <script lang="ts">
-  import { onMount, tick as render } from "svelte";
+  import { onMount, tick as rendered } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
-  import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
-  interface Settings {
-    start: number;
-    end: number;
-    net: number;
-    duration_mode: boolean;
-    lunch_start: number;
-    lunch_end: number;
-    salary: number;
-    deduct: boolean;
-    stamp: boolean;
-    resignation: string;
-    hide_money: boolean;
-  }
-  interface Snapshot {
-    phase: "Before" | "Working" | "After";
-    remaining: number;
-    countdown: number;
-    on_lunch: boolean;
-    progress: number;
-    earned: number;
-    end: number;
-    days: number | null;
-  }
-  const win = getCurrentWindow(),
-    pad = (n: number) => String(n).padStart(2, "0");
-  const hhmm = (n: number) =>
-    n < 0 ? "" : pad(Math.floor(n / 60)) + ":" + pad(n % 60);
-  function minutes(value: string) {
-    if (!value) return -1;
-    const [h, m] = value.split(":").map(Number);
-    return h * 60 + m;
-  }
-  let s: Settings,
-    draft: Settings,
-    v: Snapshot,
-    now = new Date(),
-    expanded = false,
-    pinned = true,
-    canPin = true,
-    drag = false,
-    error = "",
-    hours = 7.5;
-  function reset() {
-    draft = { ...s };
-    hours = s.net / 60;
+  import { getCurrentWindow } from "@tauri-apps/api/window";
+  import Calendar from "./Calendar.svelte";
+  import { filterText, type EndMode, type Field, type Fields, type Tick, type View } from "./types";
+
+  const win = getCurrentWindow();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const hhmm = (m: number) => (m < 0 ? "--:--" : `${pad(Math.floor(m / 60))}:${pad(m % 60)}`);
+  const clock = (s: number) => `${pad(Math.floor(s / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
+  const money = (v: number, hide: boolean) => (hide ? "****" : `¥${v.toFixed(2)}`);
+  const lunchFields: Field[] = ["lunchStart", "lunchEnd"];
+
+  let view = $state<View | null>(null);
+  let t = $state<Tick | null>(null);
+  let fields = $state<Fields>({ start: "", end: "", salary: "", lunchStart: "", lunchEnd: "", resignation: "" });
+  let focused: Field | null = null;
+  let expanded = $state(false);
+  let dragging = $state(false);
+  let error = $state("");
+  let inlineCalendar = $state(false);
+  let dateInput = $state<HTMLInputElement>();
+  let resizing: { x: number; scale: number } | null = null;
+
+  const s = $derived(view?.settings);
+  const scale = $derived((s?.scalePercent ?? 100) / 100);
+
+  function show(next: View, keep: Field | null = null) {
+    view = next;
+    fields = keep ? { ...next.fields, [keep]: fields[keep] } : { ...next.fields };
+    error = next.error ?? next.autostart.error ?? "";
   }
   async function refresh() {
-    v = await invoke("tick");
-    now = new Date();
-  }
-  async function panel(open: boolean) {
-    expanded = open;
-    if (open) reset();
-    await win.setSize(new LogicalSize(360, open ? 776 : 384));
-  }
-  async function persist(value: Settings) {
-    await invoke("save", { settings: value });
-    s = value;
-    await refresh();
-    error = "";
-  }
-  async function saveDraft() {
     try {
-      await persist({ ...draft, net: Math.round(hours * 60) });
-      await panel(false);
+      t = await invoke<Tick>("tick");
     } catch (e) {
       error = String(e);
     }
   }
-  async function hideMoney() {
+  async function call(cmd: string, args: Record<string, unknown> = {}, keep: Field | null = null) {
     try {
-      await persist({ ...s, hide_money: !s.hide_money });
-      if (draft) draft.hide_money = s.hide_money;
-    } catch (e) {
-      error = String(e);
-    }
-  }
-  async function pin() {
-    try {
-      await win.setAlwaysOnTop(!pinned);
-      pinned = !pinned;
-    } catch {
-      error = "当前桌面使用普通窗口";
-      pinned = false;
-    }
-  }
-  onMount(() => {
-    let alive = true,
-      timer: ReturnType<typeof setInterval>;
-    const clean: (() => void)[] = [];
-    async function init() {
-      s = await invoke("initial");
-      canPin=await invoke("pin_supported");
-      pinned=canPin;
-      reset();
+      show(await invoke<View>(cmd, args), keep);
       await refresh();
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  // Focus rules from the C++ editor: lunch is one interval, so moving
+  // between its endpoints only applies a complete pair; anything else
+  // commits the field being left.
+  async function leave(prev: Field | null, next: Field | null) {
+    if (!prev) return;
+    if (next && lunchFields.includes(prev) && lunchFields.includes(next)) {
+      const v = await invoke<View | null>("live_field", { field: prev, fields: $state.snapshot(fields) });
+      if (v) view = v;
+      return;
+    }
+    await call("commit_field", { field: prev, fields: $state.snapshot(fields) }, next);
+  }
+  async function onfocus(field: Field) {
+    const prev = focused;
+    focused = field;
+    if (prev !== field) await leave(prev, field);
+  }
+  function onblur(field: Field) {
+    setTimeout(() => {
+      const active = document.activeElement as HTMLElement | null;
+      if (focused === field && !active?.dataset.field) {
+        focused = null;
+        void leave(field, null);
+      }
+    });
+  }
+  async function oninput(field: Field, e: Event) {
+    const input = e.currentTarget as HTMLInputElement;
+    const text = filterText(field, input.value, view!.settings.endMode);
+    if (text !== input.value) input.value = text;
+    fields[field] = text;
+    error = "";
+    if (field === "end" || lunchFields.includes(field)) {
+      const v = await invoke<View | null>("live_field", { field, fields: $state.snapshot(fields) });
+      if (v) {
+        view = v;
+        await refresh();
+      }
+    }
+  }
+  function onkeydown(field: Field, e: KeyboardEvent) {
+    const input = e.currentTarget as HTMLInputElement;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      input.blur();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      fields[field] = view!.fields[field];
+      input.value = fields[field];
+      input.blur();
+    } else if (field === "resignation" && (e.key === "F4" || e.key === "ArrowDown")) {
+      e.preventDefault();
+      void openCalendar();
+    }
+  }
+
+  async function openCalendar() {
+    if (!view?.pinSupported) {
+      await call("commit_field", { field: "resignation", fields: $state.snapshot(fields) });
+      inlineCalendar = true;
+      return;
+    }
+    const r = dateInput!.getBoundingClientRect();
+    focused = null;
+    await call("open_calendar", { anchor: { x: r.x, y: r.y, w: r.width, h: r.height }, fields: $state.snapshot(fields) });
+  }
+  async function inlineFinish(finish: object) {
+    inlineCalendar = false;
+    await call("calendar_finish", { finish });
+    dateInput?.focus();
+  }
+
+  async function panel(open: boolean) {
+    if (!open && focused) {
+      const prev = focused;
+      focused = null;
+      await leave(prev, null);
+    }
+    expanded = open;
+    inlineCalendar = false;
+    await invoke("set_expanded", { expanded: open });
+  }
+  async function setMode(mode: EndMode) {
+    await call("set_end_mode", { mode, fields: $state.snapshot(fields) });
+  }
+  function windowPrefs(scalePercent: number, opacityPercent: number, persist: boolean) {
+    void call("set_window", { scale: scalePercent, opacity: opacityPercent, persist }, focused);
+  }
+  function grip(e: PointerEvent) {
+    const el = e.currentTarget as HTMLElement;
+    if (e.type === "pointerdown") {
+      el.setPointerCapture(e.pointerId);
+      resizing = { x: e.screenX, scale: s!.scalePercent };
+    } else if (resizing && e.type === "pointermove") {
+      const next = Math.min(150, Math.max(75, Math.round(resizing.scale + ((e.screenX - resizing.x) / 360) * 100)));
+      if (next !== s!.scalePercent) windowPrefs(next, s!.opacityPercent, false);
+    } else if (resizing) {
+      resizing = null;
+      windowPrefs(s!.scalePercent, s!.opacityPercent, true);
+    }
+  }
+
+  onMount(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const clean: (() => void)[] = [];
+    const loop = () => {
+      if (!document.hidden) void refresh();
+      timer = setTimeout(loop, 1000 - (Date.now() % 1000) + 5);
+    };
+    async function init() {
+      show(await invoke<View>("state"));
+      await refresh();
+      clean.push(await listen<View>("settings", (e) => show(e.payload, focused)));
       clean.push(
-        await listen<Settings>("ocr-applied", async (e) => {
-          s = e.payload;
-          reset();
-          error = "";
-          await refresh();
+        await listen<View>("calendar-closed", async (e) => {
+          show(e.payload);
+          await rendered();
+          dateInput?.focus();
         }),
       );
+      clean.push(await listen<View["update"]>("update", (e) => view && (view.update = e.payload)));
       clean.push(
         await listen<string>("ocr-error", async (e) => {
-          await panel(true);
+          if (!expanded) await panel(true);
           error = e.payload;
         }),
       );
       clean.push(
         await win.onDragDropEvent((e) => {
-          drag = e.payload.type === "over" || e.payload.type === "enter";
+          dragging = e.payload.type === "over" || e.payload.type === "enter";
         }),
       );
-      await render();
+      document.addEventListener("visibilitychange", () => !document.hidden && void refresh());
+      await rendered();
       await win.show();
-      requestAnimationFrame(() =>
-        requestAnimationFrame(() => void invoke("first_frame")),
-      );
-      timer = setInterval(() => {
-        if (alive && !document.hidden) void refresh();
-      }, 1000);
+      requestAnimationFrame(() => requestAnimationFrame(() => void invoke("first_frame")));
+      loop();
     }
     void init().catch(async (e) => {
       error = String(e);
       await win.show();
     });
     return () => {
-      alive = false;
-      clearInterval(timer);
+      clearTimeout(timer);
       clean.forEach((fn) => fn());
     };
   });
-  $: count = v
-    ? hhmm(Math.floor(v.countdown / 60)) + ":" + pad(v.countdown % 60)
-    : "";
+
+  const title = $derived(
+    !t ? "" : t.phase === "Before" ? "距离上班" : t.phase === "After" ? "今日班次结束"
+      : s?.deductLunch && !t.onLunch ? "距离下班 · 已扣午休" : "距离下班",
+  );
+  const big = $derived(!t ? "" : t.onLunch ? "午休中" : t.phase === "After" ? "已下班" : clock(t.countdown));
+  const percent = $derived(t ? Math.round(t.progress * 100) : 0);
 </script>
 
-<main class:drag>
-  <header data-tauri-drag-region>
-    <img src="/cat.svg" alt="" /><strong data-tauri-drag-region>
-      OffWork
-    </strong><button disabled={!canPin} on:click={pin}>
-      {pinned ? "已置顶" : "普通窗口"}
-    </button><button aria-label="关闭窗口" on:click={() => win.close()}>
-      ×
-    </button>
-  </header>
-  {#if v && s}
-    <section>
-      <div class="row">
-        <span class="date">
-          {pad(now.getMonth() + 1)}.{pad(now.getDate())} · 周{"日一二三四五六"[
-            now.getDay()
-          ]}
-        </span>{#if v.days !== null}<span class="stamp">
-            剩余 {v.days} 天离职
-          </span>{/if}
+{#snippet input(field: Field, label: string, placeholder: string)}
+  <label>
+    <span>{label}</span>
+    <input
+      data-field={field}
+      value={fields[field]}
+      {placeholder}
+      inputmode={field === "salary" || (field === "end" && s?.endMode === "duration") ? "decimal" : "numeric"}
+      type={field === "salary" && s?.hideEarned ? "password" : "text"}
+      autocomplete="off"
+      spellcheck="false"
+      onfocus={() => onfocus(field)}
+      onblur={() => onblur(field)}
+      oninput={(e) => oninput(field, e)}
+      onkeydown={(e) => onkeydown(field, e)}
+    />
+  </label>
+{/snippet}
+
+<div class="frame" style:transform="scale({scale})" style:opacity={(s?.opacityPercent ?? 100) / 100}>
+  <main class:drag={dragging} class:expanded>
+    <header data-tauri-drag-region>
+      <img src="/cat.svg" alt="" />
+      <div class="title" data-tauri-drag-region>
+        <strong data-tauri-drag-region>OffWork</strong>
+        <small data-tauri-drag-region>{t ? `${t.date} ${t.time}` : ""}</small>
       </div>
-      <h1>
-        {v.phase === "Before"
-          ? "距离上班"
-          : v.phase === "After"
-            ? "今日班次结束"
-            : "距离下班"}
-      </h1>
-      <time class:words={v.on_lunch || v.phase === "After"}>
-        {v.on_lunch ? "午休中" : v.phase === "After" ? "已下班" : count}
-      </time>
-      <div class="row">
-        <small>今日进度</small><small>{Math.round(v.progress * 100)}%</small>
-      </div>
-      <div
-        class="track"
-        role="progressbar"
-        aria-label="今日进度"
-        aria-valuenow={Math.round(v.progress * 100)}
-      >
-        <div class="fill" style:width={v.progress * 100 + "%"}></div>
-      </div>
-      <div class="row muted">
-        <small>{hhmm(s.start)} 上班</small><small>{hhmm(v.end)} 下班</small>
-      </div>
-      <div class="money">
-        <div class="row">
-          <small>今天已经赚了</small><button on:click={hideMoney}>
-            {s.hide_money ? "显示金额" : "隐藏金额"}
-          </button>
-        </div>
-        <div class="row">
-          <b>{s.hide_money ? "****" : "¥" + v.earned.toFixed(2)}</b><small>
-            日薪 {s.hide_money ? "****" : "¥" + s.salary.toFixed(2)}
-          </small>
-        </div>
-      </div>
-    </section>
-    <footer>
+      {#if view?.update.available}
+        <button
+          class="update"
+          aria-label={view.update.installs ? `下载并安装 ${view.update.available}` : `查看新版本 ${view.update.available}`}
+          title={view.update.error ?? `发现新版本 ${view.update.available}`}
+          disabled={view.update.downloading}
+          onclick={() => call("start_update").catch(() => {})}
+        >
+          {view.update.downloading ? (view.update.percent >= 0 ? `${view.update.percent}%` : "下载中") : "↑ 更新"}
+        </button>
+      {/if}
       <button
-        class="settings"
-        aria-expanded={expanded}
-        on:click={() => panel(!expanded)}
+        aria-pressed={view?.pinned ?? false}
+        disabled={!view?.pinSupported}
+        title={view?.pinSupported ? "切换置顶" : "当前桌面不支持置顶"}
+        onclick={() => call("set_pinned", { pinned: !view?.pinned })}
       >
-        设置 {expanded ? "⌃" : "﹀"}
-      </button><span>
-        {now.toLocaleTimeString("zh-CN", { hour12: false })} · v0.1.0
-      </span>
-    </footer>
-    {#if expanded}
-      <form on:submit|preventDefault={saveDraft}>
+        {view?.pinned ? "已置顶" : "普通窗口"}
+      </button>
+      <button aria-label={view?.tray ? "隐藏到托盘" : "退出"} onclick={() => win.close()}>×</button>
+    </header>
+
+    {#if t && s}
+      <section class="summary" aria-label="今日概览">
+        <div class="row">
+          <h1>{title}</h1>
+          {#if t.days !== null}<span class="stamp">剩余 {t.days} 天离职</span>{/if}
+        </div>
+        <time class:words={t.onLunch || t.phase === "After"}>{big}</time>
+        <div class="row"><small>今日进度</small><small>{percent}%</small></div>
+        <div class="track" role="progressbar" aria-label="今日进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
+          <div class="fill" style:width="{t.progress * 100}%"></div>
+        </div>
+        <div class="row muted"><small>{hhmm(s.startMinutes)} 上班</small><small>{hhmm(t.endMinutes)} 下班</small></div>
+        <div class="money">
+          <div class="row">
+            <small>今天已经赚了</small>
+            <button class="eye" aria-pressed={s.hideEarned} aria-label={s.hideEarned ? "显示金额" : "隐藏金额"} onclick={() => call("toggle", { flag: "hideEarned" }, focused)}>
+              {s.hideEarned ? "◡ 显示" : "◉ 隐藏"}
+            </button>
+          </div>
+          <div class="row">
+            <b>{money(t.earned, s.hideEarned)}</b><small>日薪 {money(s.dailySalary, s.hideEarned)}</small>
+          </div>
+        </div>
+      </section>
+      <footer>
+        <button class="settings" aria-expanded={expanded} aria-controls="panel" onclick={() => panel(!expanded)}>
+          设置 {expanded ? "︿" : "﹀"}
+        </button>
+        {#if !expanded}<span class="version">v{view?.version}</span>{/if}
+      </footer>
+    {/if}
+
+    {#if expanded && s && view}
+      <form id="panel" class="panel" onsubmit={(e) => e.preventDefault()}>
         <fieldset>
           <legend>我的班次</legend>
-          <label>
-            上班时间<input
-              type="time"
-              required
-              value={hhmm(draft.start)}
-              on:change={(e) => (draft.start = minutes(e.currentTarget.value))}
-            />
-          </label>
-          <label>
-            下班方式<select bind:value={draft.duration_mode}>
-              <option value={true}>按净工时</option><option value={false}>
-                固定时间
-              </option>
-            </select>
-          </label>
-          {#if draft.duration_mode}<label>
-              净工时（小时）<input
-                type="number"
-                min="0.01"
-                max="23.99"
-                step="any"
-                required
-                bind:value={hours}
-              />
-            </label>{:else}<label>
-              下班时间<input
-                type="time"
-                required
-                value={hhmm(draft.end)}
-                on:change={(e) => (draft.end = minutes(e.currentTarget.value))}
-              />
-            </label>{/if}
-          <label>
-            日薪（元）<input
-              type={s.hide_money ? "password" : "text"}
-              inputmode="decimal"
-              required
-              value={draft.salary}
-              on:input={(e) => (draft.salary = Number(e.currentTarget.value))}
-            />
-          </label>
-          <label>
-            午休开始<input
-              type="time"
-              value={hhmm(draft.lunch_start)}
-              on:change={(e) =>
-                (draft.lunch_start = minutes(e.currentTarget.value))}
-            />
-          </label>
-          <label>
-            午休结束<input
-              type="time"
-              value={hhmm(draft.lunch_end)}
-              on:change={(e) =>
-                (draft.lunch_end = minutes(e.currentTarget.value))}
-            />
-          </label>
+          {@render input("start", "上班时间", "09:00")}
+          {@render input("salary", "日薪（元）", "500")}
+          <div class="mode" role="radiogroup" aria-label="下班方式">
+            <span>下班方式</span>
+            <div>
+              <button type="button" role="radio" aria-checked={s.endMode === "endTime"} onclick={() => setMode("endTime")}>固定时间</button>
+              <button type="button" role="radio" aria-checked={s.endMode === "duration"} onclick={() => setMode("duration")}>按净工时</button>
+            </div>
+          </div>
+          {@render input("end", s.endMode === "duration" ? "净工时（小时）" : "下班时间", s.endMode === "duration" ? "7.5" : "18:00")}
+          {@render input("lunchStart", "午休开始", "留空表示无午休")}
+          {@render input("lunchEnd", "午休结束", "")}
+          <label class="check wide"><input type="checkbox" checked={s.deductLunch} onchange={() => call("toggle", { flag: "deductLunch" }, focused)} />倒计时扣除剩余午休（只改显示）</label>
         </fieldset>
-        <label class="check">
-          <input type="checkbox" bind:checked={draft.deduct} />倒计时扣除午休
-        </label>
         <fieldset>
-          <legend>离职日期</legend><label>
-            最后一天<input
-              type="date"
-              max="9999-12-31"
-              min="0001-01-01"
-              bind:value={draft.resignation}
-            />
-          </label><label class="check">
-            <input type="checkbox" bind:checked={draft.stamp} />显示离职章
+          <legend>离职日期</legend>
+          <label class="date">
+            <span>最后一天（YYYY-MM-DD）</span>
+            <span class="pair">
+              <input
+                bind:this={dateInput}
+                data-field="resignation"
+                value={fields.resignation}
+                placeholder="2026-12-31"
+                inputmode="numeric"
+                aria-describedby="coverage"
+                autocomplete="off"
+                onfocus={() => onfocus("resignation")}
+                onblur={() => onblur("resignation")}
+                oninput={(e) => oninput("resignation", e)}
+                onkeydown={(e) => onkeydown("resignation", e)}
+              /><button type="button" aria-label="打开日历 (F4)" aria-haspopup="dialog" onclick={openCalendar}>日历</button>
+            </span>
+          </label>
+          <label class="check"><input type="checkbox" checked={s.showResignation} onchange={() => call("toggle", { flag: "showResignation" }, focused)} />显示离职倒计时</label>
+          <small id="coverage" class="wide muted">按周一至周五计，不含法定节假日及调休</small>
+          {#if inlineCalendar}
+            <div class="wide">
+              <Calendar date={s.resignationDate} today={new Date().toISOString().slice(0, 10)}
+                onpick={(date) => inlineFinish({ action: "pick", date })}
+                onclear={() => inlineFinish({ action: "clear" })}
+                oncancel={() => inlineFinish({ action: "cancel" })} />
+            </div>
+          {/if}
+        </fieldset>
+        <fieldset>
+          <legend>窗口</legend>
+          <label>
+            <span>缩放 {s.scalePercent}%</span>
+            <input type="range" min="75" max="150" step="5" value={s.scalePercent}
+              oninput={(e) => windowPrefs(+e.currentTarget.value, s.opacityPercent, false)}
+              onchange={(e) => windowPrefs(+e.currentTarget.value, s.opacityPercent, true)} />
+          </label>
+          <label>
+            <span>不透明度 {s.opacityPercent}%</span>
+            <input type="range" min="25" max="100" step="5" value={s.opacityPercent}
+              oninput={(e) => windowPrefs(s.scalePercent, +e.currentTarget.value, false)}
+              onchange={(e) => windowPrefs(s.scalePercent, +e.currentTarget.value, true)} />
+          </label>
+          <label class="check wide">
+            <input type="checkbox" checked={view.autostart.enabled} onchange={(e) => call("set_autostart", { enabled: e.currentTarget.checked }, focused)} />开机自启
+            {#if view.autostart.otherTarget}<small class="muted">（当前指向 {view.autostart.otherTarget}，开启即改为本程序）</small>{/if}
           </label>
         </fieldset>
-        <button class="save">保存设置</button>
-      </form>{/if}{/if}
-  {#if error}<p role="alert">{error}</p>{/if}
-</main>
+        <p class="status" class:error={!!error} role={error ? "alert" : "status"}>
+          {error || view.notice || `v${view.version} · 设置保存在本机`}
+        </p>
+      </form>
+    {/if}
+    {#if !expanded && error}<p class="toast" role="alert">{error}</p>{/if}
+    <div class="grip" aria-hidden="true" onpointerdown={grip} onpointermove={grip} onpointerup={grip} onpointercancel={grip}></div>
+  </main>
+</div>
 
 <style>
   :global(*) {
     box-sizing: border-box;
   }
+  :global(html),
   :global(body) {
-    background: #fffbee;
+    margin: 0;
+    background: transparent;
+    overflow: hidden;
     color: #293e33;
-    font:
-      14px "PingFang SC",
-      "Microsoft YaHei",
-      sans-serif;
+    font: 14px "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  }
+  .frame {
+    width: 360px;
+    transform-origin: 0 0;
   }
   main {
-    min-height: 100vh;
-    padding: 14px 21px 10px;
+    position: relative;
+    height: 384px;
+    padding: 12px 20px 8px;
     border: 1px solid #aba992;
+    border-radius: 10px;
     background: #fffbee;
+    overflow: hidden;
+  }
+  main.expanded {
+    height: 776px;
   }
   main.drag {
     outline: 4px dashed #48705a;
-    outline-offset: -5px;
+    outline-offset: -6px;
+    background: #eef3e6;
+  }
+  main.drag > * {
+    visibility: hidden;
   }
   header,
   footer,
@@ -324,19 +408,26 @@
     gap: 8px;
   }
   header {
-    padding-bottom: 10px;
+    padding-bottom: 8px;
     border-bottom: 2px solid #304e40;
     user-select: none;
   }
   header img {
-    width: 29px;
+    width: 30px;
     pointer-events: none;
   }
-  strong {
-    font:
-      bold 21px Georgia,
-      serif;
+  .title {
     margin-right: auto;
+    display: grid;
+    line-height: 1.15;
+  }
+  .title strong {
+    font: bold 20px Georgia, serif;
+  }
+  .title small {
+    font-size: 11px;
+    color: #566255;
+    font-variant-numeric: tabular-nums;
   }
   button {
     font: inherit;
@@ -344,139 +435,202 @@
     border: 0;
     background: none;
     cursor: pointer;
-    padding: 4px;
+    padding: 4px 6px;
+    border-radius: 3px;
   }
-  button:hover {
+  button:hover:not(:disabled) {
     background: #eae7d7;
   }
-  button:focus-visible,
-  input:focus-visible,
-  select:focus-visible {
+  button:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+  :focus-visible {
     outline: 2px solid #48705a;
+    outline-offset: 1px;
   }
   header button,
-  .money button,
   small,
   footer {
     font-size: 12px;
   }
-  section {
-    padding-top: 16px;
+  .update {
+    color: #823b27;
+    border: 1px solid #ad6653;
   }
-  .date {
-    font:
-      14px Georgia,
-      serif;
-    letter-spacing: 1px;
+  .summary {
+    padding-top: 12px;
+  }
+  h1 {
+    font-size: 14px;
+    margin: 0;
+    font-weight: 500;
   }
   .stamp {
     font-size: 12px;
     color: #823b27;
     border: 1px solid #ad6653;
-    padding: 3px 6px;
+    padding: 2px 6px;
     transform: rotate(-4deg);
     border-radius: 3px;
   }
-  h1 {
-    font-size: 14px;
-    margin: 14px 0 0;
-    font-weight: 500;
-  }
   time {
     display: block;
-    font:
-      54px/1.12 Georgia,
-      serif;
+    font: 54px/1.12 Georgia, serif;
     letter-spacing: -2px;
     font-variant-numeric: tabular-nums;
-    margin-bottom: 6px;
+    margin: 2px 0 6px;
   }
   .words {
     font-size: 40px;
     line-height: 60px;
+    letter-spacing: 0;
   }
   .track {
     height: 7px;
     margin: 6px 0;
-    background: repeating-linear-gradient(
-      90deg,
-      #deded1 0 5px,
-      transparent 5px 7px
-    );
+    background: repeating-linear-gradient(90deg, #deded1 0 5px, transparent 5px 7px);
   }
   .fill {
     height: 100%;
-    background: repeating-linear-gradient(
-      90deg,
-      #48705a 0 5px,
-      transparent 5px 7px
-    );
-  }
-  .money {
-    margin: 12px 0 6px;
-    padding: 7px 0;
-    border-block: 1px dashed #a9aa98;
-  }
-  .money b {
-    font:
-      26px Georgia,
-      serif;
+    background: repeating-linear-gradient(90deg, #48705a 0 5px, transparent 5px 7px);
   }
   .muted,
   footer {
     color: #566255;
   }
+  .money {
+    margin: 10px 0 4px;
+    padding: 6px 0;
+    border-block: 1px dashed #a9aa98;
+  }
+  .money b {
+    font: 26px Georgia, serif;
+    font-variant-numeric: tabular-nums;
+  }
+  .eye {
+    font-size: 12px;
+  }
+  footer {
+    margin-top: 6px;
+  }
   .settings {
     font-weight: bold;
     font-size: 14px;
   }
+  .version {
+    color: #6f7a6c;
+  }
+  .panel {
+    margin-top: 2px;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .panel {
+      animation: fade 160ms ease-out;
+    }
+  }
+  @keyframes fade {
+    from {
+      opacity: 0;
+    }
+  }
   fieldset {
     border: 0;
     border-top: 1px dashed #a9aa98;
-    padding: 8px 0;
+    padding: 6px 0;
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 7px 12px;
-    margin: 10px 0 0;
+    gap: 6px 12px;
+    margin: 4px 0 0;
   }
   legend {
     font-weight: 600;
     padding-right: 8px;
+    font-size: 13px;
   }
-  label {
+  label,
+  .mode {
     display: grid;
-    gap: 3px;
+    gap: 2px;
     font-size: 12px;
   }
-  input,
-  select {
+  .wide,
+  .date {
+    grid-column: 1 / -1;
+  }
+  input:not([type]),
+  input[type="text"],
+  input[type="password"],
+  .pair input {
     width: 100%;
     min-width: 0;
-    padding: 4px;
+    padding: 4px 6px;
     border: 1px solid #aaa994;
     background: #fffdf5;
     border-radius: 3px;
     color: inherit;
-    font: 14px inherit;
+    font: 14px/1.3 inherit;
+    font-variant-numeric: tabular-nums;
+  }
+  input::placeholder {
+    color: #9a9c8c;
+  }
+  .pair {
+    display: flex;
+    gap: 6px;
+  }
+  .pair button,
+  .mode button {
+    border: 1px solid #aaa994;
+    white-space: nowrap;
+  }
+  .mode div {
+    display: flex;
+    gap: 4px;
+  }
+  .mode button {
+    flex: 1;
+    padding: 4px 2px;
+  }
+  .mode [aria-checked="true"] {
+    background: #385542;
+    color: #fff;
   }
   .check {
     display: flex;
     align-items: center;
+    gap: 6px;
   }
-  .check input {
-    width: auto;
+  input[type="range"] {
+    width: 100%;
+    accent-color: #48705a;
   }
-  .save {
-    background: #385542;
-    color: white;
-    margin-top: 10px;
-    border-radius: 3px;
-    padding: 6px 12px;
+  .status {
+    margin: 6px 0 0;
+    font-size: 12px;
+    color: #566255;
+    min-height: 32px;
   }
-  .save:hover {
-    background: #293e33;
-  }
-  p {
+  .error,
+  .toast {
     color: #823b27;
+  }
+  .toast {
+    position: absolute;
+    left: 20px;
+    right: 20px;
+    bottom: 4px;
+    margin: 0;
+    font-size: 12px;
+    background: #fffbee;
+  }
+  .grip {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    width: 16px;
+    height: 16px;
+    cursor: nwse-resize;
+    background: linear-gradient(135deg, transparent 55%, #aba992 55% 62%, transparent 62% 75%, #aba992 75% 82%, transparent 82%);
   }
 </style>

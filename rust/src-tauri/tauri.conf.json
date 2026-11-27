@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "OffWork",
-  "version": "0.1.0",
-  "identifier": "io.github.token-rap.offwork.prototype",
+  "version": "0.5.0-preview.1",
+  "identifier": "io.github.token-rap.offwork",
   "build": {
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist",
@@ -12,19 +12,24 @@
   "app": {
     "windows": [
       {
-        "title": "下班手账",
+        "title": "OffWork",
         "width": 360,
         "height": 384,
-        "minWidth": 320,
-        "minHeight": 300,
+        "minWidth": 270,
+        "minHeight": 288,
         "decorations": false,
         "alwaysOnTop": true,
-        "visible": false
+        "visible": false,
+        "label": "main",
+        "transparent": true,
+        "shadow": false,
+        "resizable": false
       }
     ],
     "security": {
       "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
-    }
+    },
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,
@@ -34,7 +39,9 @@
       "icons/icon.icns"
     ],
     "category": "Productivity",
-    "macOS": {"minimumSystemVersion":"12.0"},
+    "macOS": {
+      "minimumSystemVersion": "12.0"
+    },
     "linux": {
       "deb": {
         "recommends": [

@@ -5,6 +5,7 @@
 #include <shellapi.h>
 
 #define REMINDER_MESSAGE (WM_APP + 0x547)
+void offwork_legacy_restore(void);
 #define REMINDER_ICON 0x547
 
 static void remove_balloon(HWND window) {
@@ -21,8 +22,7 @@ static LRESULT CALLBACK on_balloon(HWND window, UINT msg, WPARAM w, LPARAM l,
     if (msg == REMINDER_MESSAGE && w == REMINDER_ICON) {
         switch (l) {
         case NIN_BALLOONUSERCLICK:
-            ShowWindow(window, SW_RESTORE);
-            SetForegroundWindow(window);
+            offwork_legacy_restore();
             /* fall through */
         case NIN_BALLOONHIDE:
         case NIN_BALLOONTIMEOUT:
