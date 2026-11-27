@@ -1,0 +1,16 @@
+{
+  "legacy_0_4_5_install_seconds": 4.3,
+  "legacy_running_after": 0.0,
+  "rust_upgrade_install_seconds": 1.3,
+  "rust_running_after": 6.2,
+  "program_bytes": 12353024,
+  "uninstall_display_name": "OffWork 0.5.0-preview.1",
+  "migration": "exact, INI unchanged",
+  "second_launch_exit_code": 0,
+  "rust_reinstall_install_seconds": 1.3,
+  "relaunched_after": 0.4,
+  "uninstall_exit_code": 0,
+  "uninstalled": true,
+  "settings_kept_after_uninstall": true,
+  "ok": true
+}

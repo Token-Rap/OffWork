@@ -1,0 +1,54 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "OffWork",
+  "version": "0.5.0-preview.1",
+  "identifier": "io.github.token-rap.offwork",
+  "build": {
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "OffWork",
+        "width": 360,
+        "height": 384,
+        "minWidth": 270,
+        "minHeight": 288,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "visible": false,
+        "label": "main",
+        "transparent": true,
+        "shadow": false,
+        "resizable": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+    },
+    "macOSPrivateApi": true
+  },
+  "bundle": {
+    "active": true,
+    "icon": [
+      "icons/32x32.png",
+      "icons/icon.ico",
+      "icons/icon.icns"
+    ],
+    "category": "Productivity",
+    "macOS": {
+      "minimumSystemVersion": "12.0"
+    },
+    "linux": {
+      "deb": {
+        "recommends": [
+          "tesseract-ocr",
+          "tesseract-ocr-chi-sim"
+        ]
+      }
+    }
+  }
+}

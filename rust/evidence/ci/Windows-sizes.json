@@ -1,0 +1,12 @@
+{
+  "offwork.exe": {
+    "download_bytes": 11798016,
+    "unpacked_bytes": 11798016,
+    "sha256": "d662d1f9707c26298dd0f59ee472307b6511d0b81b3f7c4b9207d8feea17e21a"
+  },
+  "OffWork_0.1.0_x64-setup.exe": {
+    "download_bytes": 2573706,
+    "unpacked_bytes": 11983226,
+    "sha256": "2bba03f1920dcf9101fcbbb90d6fd8750b36d55f74ae40800ba9d9db8b98c2ce"
+  }
+}

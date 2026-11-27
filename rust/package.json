@@ -1,0 +1,25 @@
+{
+  "name": "offwork-widget",
+  "private": true,
+  "type": "module",
+  "version": "0.5.0-preview.1",
+  "scripts": {
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "build": "vite build",
+    "dev": "vite",
+    "tauri": "tauri",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "svelte": "^5"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^5",
+    "@tauri-apps/cli": "^2",
+    "svelte-check": "^4",
+    "typescript": "~5.8.3",
+    "vite": "^6",
+    "vitest": "^3.2.4"
+  }
+}
