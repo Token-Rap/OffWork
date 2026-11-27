@@ -32,7 +32,7 @@
 </script>
 
 {#if init}
-  <div class="zoom" style:zoom={init.scale / 100}>
+  <div class="zoom">
     <Calendar
       date={init.date}
       today={init.today}
@@ -52,7 +52,7 @@
     overflow: auto;
   }
   .zoom {
-    transform-origin: 0 0;
+
     width: 288px;
   }
 </style>

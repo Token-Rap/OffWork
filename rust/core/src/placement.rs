@@ -38,6 +38,14 @@ pub fn window_size(scale_percent: i32, expanded: bool) -> (f64, f64) {
     (WIDTH * k, h * k)
 }
 
+/// Logical window size for a scale percent that also fits the work area
+/// (`work` in logical pixels). Height and width shrink to the work area; the
+/// UI lays out against the real window height and scrolls the settings panel.
+pub fn fitted_size(scale_percent: i32, expanded: bool, work: (f64, f64)) -> (f64, f64) {
+    let (w, h) = window_size(scale_percent, expanded);
+    (w.min(work.0).floor(), h.min(work.1).floor())
+}
+
 /// Top right of the work area, `margin` physical pixels in from the edges.
 pub fn initial_position(work: Rect, size: (i32, i32), margin: i32) -> (i32, i32) {
     clamp_into(work, work.right() - size.0 - margin, work.y + margin, size)

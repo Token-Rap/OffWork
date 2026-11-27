@@ -25,21 +25,75 @@
   let inlineCalendar = $state(false);
   let dateInput = $state<HTMLInputElement>();
   let resizing: { x: number; scale: number } | null = null;
+  let mainEl = $state<HTMLElement>();
+  let panelEl = $state<HTMLElement>();
+
+  /** Scrolls to the end and checks the last control is inside the window. */
+  function layoutReport() {
+    for (const el of [panelEl, mainEl]) if (el) el.scrollTop = el.scrollHeight;
+    const rect = (el: Element | null | undefined) => {
+      const r = el?.getBoundingClientRect();
+      return r ? { top: r.top, bottom: r.bottom, left: r.left, right: r.right } : null;
+    };
+    const controls = Array.from(panelEl?.querySelectorAll("input, button, select") ?? []);
+    // Really visible: the top-most element at its centre is it (or inside it),
+    // which catches clipping by any ancestor, not just the window edge.
+    const hit = (el: Element | null | undefined) => {
+      if (!el) return false;
+      const r = el.getBoundingClientRect();
+      const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return !!top && (top === el || el.contains(top) || top.contains(el));
+    };
+    return {
+      visible: { lastControl: hit(controls.at(-1)), status: hit(panelEl?.querySelector(".status")), header: hit(mainEl?.querySelector("header strong")) },
+      viewport: { width: innerWidth, height: innerHeight },
+      scale: s?.scalePercent,
+      main: rect(mainEl),
+      panel: panelEl ? { ...rect(panelEl), scrollHeight: panelEl.scrollHeight, clientHeight: panelEl.clientHeight } : null,
+      lastControl: rect(controls.at(-1)),
+      status: rect(panelEl?.querySelector(".status")),
+      controls: controls.length,
+    };
+  }
 
   const s = $derived(view?.settings);
-  const scale = $derived((s?.scalePercent ?? 100) / 100);
 
   function show(next: View, keep: Field | null = null) {
     view = next;
     fields = keep ? { ...next.fields, [keep]: fields[keep] } : { ...next.fields };
     error = next.error ?? next.autostart.error ?? "";
   }
+  // The clock plays back a one-minute batch computed in Rust (one IPC round
+  // trip a minute instead of every second) and stops while hidden.
+  let batch: { startMs: number; ticks: Tick[] } | null = null;
+  let visible = true;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  function advance(): boolean {
+    if (!batch) return false;
+    const index = Math.floor((Date.now() - batch.startMs) / 1000);
+    if (index < 0 || index >= batch.ticks.length) return false;
+    t = batch.ticks[index];
+    return true;
+  }
   async function refresh() {
     try {
-      t = await invoke<Tick>("tick");
+      batch = await invoke<{ startMs: number; ticks: Tick[] }>("ticks", { count: 60 });
+      advance();
     } catch (e) {
       error = String(e);
     }
+  }
+  function loop() {
+    clearTimeout(timer);
+    timer = undefined;
+    if (!visible || document.hidden) return; // resumed by the visibility events
+    if (!advance()) void refresh();
+    timer = setTimeout(loop, 1000 - (Date.now() % 1000) + 5);
+  }
+  function setVisible(next: boolean) {
+    visible = next;
+    if (next) void refresh().then(loop);
+    else loop();
   }
   // Applies a command's View. Anything else is an error, never a blank widget.
   async function call(cmd: string, args: Record<string, unknown> = {}, keep: Field | null = null) {
@@ -141,13 +195,17 @@
   function windowPrefs(scalePercent: number, opacityPercent: number, persist: boolean) {
     void call("set_window", { scale: scalePercent, opacity: opacityPercent, persist }, focused);
   }
+  // The window's left edge stays put while resizing, so the pointer's page x
+  // (CSS px, scaled by the zoom) plus its offset from the right edge is the
+  // new width; 360 CSS px is 100 %.
   function grip(e: PointerEvent) {
     const el = e.currentTarget as HTMLElement;
     if (e.type === "pointerdown") {
       el.setPointerCapture(e.pointerId);
-      resizing = { x: e.screenX, scale: s!.scalePercent };
+      resizing = { x: innerWidth - e.clientX, scale: s!.scalePercent };
     } else if (resizing && e.type === "pointermove") {
-      const next = Math.min(150, Math.max(75, Math.round(resizing.scale + ((e.screenX - resizing.x) / 360) * 100)));
+      const width = (e.clientX + resizing.x) * (s!.scalePercent / 100);
+      const next = Math.min(150, Math.max(75, Math.round((width / 360) * 100)));
       if (next !== s!.scalePercent) windowPrefs(next, s!.opacityPercent, false);
     } else if (resizing) {
       resizing = null;
@@ -156,12 +214,7 @@
   }
 
   onMount(() => {
-    let timer: ReturnType<typeof setTimeout>;
     const clean: (() => void)[] = [];
-    const loop = () => {
-      if (!document.hidden) void refresh();
-      timer = setTimeout(loop, 1000 - (Date.now() % 1000) + 5);
-    };
     async function init() {
       show(await invoke<View>("state"));
       await refresh();
@@ -193,7 +246,19 @@
           dragging = e.payload.type === "over" || e.payload.type === "enter";
         }),
       );
-      document.addEventListener("visibilitychange", () => !document.hidden && void refresh());
+      clean.push(await listen<boolean>("widget-visibility", (e) => setVisible(e.payload)));
+      const onVisibility = () => setVisible(!document.hidden);
+      document.addEventListener("visibilitychange", onVisibility);
+      clean.push(() => document.removeEventListener("visibilitychange", onVisibility));
+      // Smoke-test hook (OFFWORK_MEASURE): expand and report whether every
+      // control is reachable inside the real window (scripts/layout_smoke.py).
+      clean.push(
+        await listen("measure-layout-check", async () => {
+          if (!expanded) await panel(true);
+          await new Promise((r) => setTimeout(r, 800));
+          await invoke("measure_layout", { report: layoutReport() });
+        }),
+      );
       await rendered();
       await win.show();
       requestAnimationFrame(() => requestAnimationFrame(() => void invoke("first_frame")));
@@ -204,6 +269,7 @@
       await win.show();
     });
     return () => {
+      visible = false;
       clearTimeout(timer);
       clean.forEach((fn) => fn());
     };
@@ -236,8 +302,8 @@
   </label>
 {/snippet}
 
-<div class="frame" style:transform="scale({scale})" style:opacity={(s?.opacityPercent ?? 100) / 100}>
-  <main class:drag={dragging} class:expanded>
+<div class="frame" style:opacity={(s?.opacityPercent ?? 100) / 100}>
+  <main class:drag={dragging} class:expanded bind:this={mainEl}>
     <header data-tauri-drag-region>
       <img src="/cat.svg" alt="" />
       <div class="title" data-tauri-drag-region>
@@ -299,7 +365,7 @@
     {/if}
 
     {#if expanded && s && view}
-      <form id="panel" class="panel" onsubmit={(e) => e.preventDefault()}>
+      <form id="panel" class="panel" bind:this={panelEl} onsubmit={(e) => e.preventDefault()}>
         <fieldset>
           <legend>我的班次</legend>
           {@render input("start", "上班时间", "09:00")}
@@ -389,20 +455,28 @@
     font: 14px "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
   }
   .frame {
-    width: 360px;
-    transform-origin: 0 0;
+    width: 100%;
   }
+  /* The window, not a fixed number, decides the height: Rust zooms the web
+     view to the scale and never makes the window taller than the monitor
+     work area, so the settings panel scrolls when a large scale does not fit
+     (e.g. 150 % on 1920x1080). */
   main {
     position: relative;
-    height: 384px;
-    padding: 12px 20px 8px;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    padding: 12px 20px 4px;
     border: 1px solid #aba992;
     border-radius: 10px;
     background: #fffbee;
     overflow: hidden;
   }
+  main > :global(*) {
+    flex-shrink: 0;
+  }
   main.expanded {
-    height: 776px;
+    overflow-y: auto;
   }
   main.drag {
     outline: 4px dashed #48705a;
@@ -525,7 +599,7 @@
     font-size: 12px;
   }
   footer {
-    margin-top: 6px;
+    margin-top: 4px;
   }
   .settings {
     font-weight: bold;
@@ -534,8 +608,12 @@
   .version {
     color: #6f7a6c;
   }
-  .panel {
-    margin-top: 2px;
+  main > .panel {
+    margin-top: 0;
+    flex: 1 1 auto;
+    min-height: 160px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
   @media (prefers-reduced-motion: no-preference) {
     .panel {
@@ -553,8 +631,8 @@
     padding: 6px 0;
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 6px 12px;
-    margin: 4px 0 0;
+    gap: 5px 12px;
+    margin: 2px 0 0;
   }
   legend {
     font-weight: 600;
@@ -619,10 +697,10 @@
     accent-color: #48705a;
   }
   .status {
-    margin: 6px 0 0;
+    margin: 4px 0 0;
     font-size: 12px;
     color: #566255;
-    min-height: 32px;
+    min-height: 1.4em;
   }
   .error,
   .toast {

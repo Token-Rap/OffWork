@@ -192,7 +192,7 @@ fn main() {
                     api.prevent_close();
                     calendar::close(app);
                     // Close hides to the tray; without a tray it quits.
-                    if !app.state::<Model>().tray.load(Ordering::SeqCst) || w.hide().is_err() {
+                    if !app.state::<Model>().tray.load(Ordering::SeqCst) || !window::hide(app) {
                         app.exit(0);
                     }
                 }
@@ -217,7 +217,6 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::state,
-            commands::tick,
             commands::commit_field,
             commands::live_field,
             commands::set_end_mode,
@@ -227,6 +226,8 @@ fn main() {
             commands::set_pinned,
             commands::set_autostart,
             commands::first_frame,
+            commands::measure_layout,
+            commands::ticks,
             calendar::open_calendar,
             calendar::calendar_init,
             calendar::calendar_finish,

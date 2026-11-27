@@ -69,13 +69,15 @@ pub async fn open_calendar(
     let factor = window.scale_factor().map_err(|e| e.to_string())?;
     let inner = window.inner_position().map_err(|e| e.to_string())?;
     let work = crate::window::work_area(&window).ok_or("无法读取显示器工作区")?;
-    let scale = f64::from(model.current().scale_percent) / 100.0;
+    let scale_percent = model.current().scale_percent;
+    let scale = f64::from(scale_percent) / 100.0;
     let px = |v: f64| (v * factor).round() as i32;
+    // The anchor is in the page's CSS pixels, which the zoom scales.
     let anchor = Rect {
-        x: inner.x + px(anchor.x),
-        y: inner.y + px(anchor.y),
-        w: px(anchor.w),
-        h: px(anchor.h),
+        x: inner.x + px(anchor.x * scale),
+        y: inner.y + px(anchor.y * scale),
+        w: px(anchor.w * scale),
+        h: px(anchor.h * scale),
     };
     let content = (px(CONTENT.0 * scale), px(CONTENT.1 * scale));
     let placed = placement::popup(anchor, work, content, (px(SCROLL_BAR), px(SCROLL_BAR)))
@@ -91,6 +93,7 @@ pub async fn open_calendar(
         .map_err(|e| e.to_string())?
         .build()
         .map_err(|e| e.to_string())?;
+    crate::window::zoom(&popup, scale_percent);
     let r = placed.rect;
     let _ = popup.set_size(PhysicalSize::new(r.w as u32, r.h as u32));
     let _ = popup.set_position(PhysicalPosition::new(r.x, r.y));

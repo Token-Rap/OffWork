@@ -23,4 +23,6 @@ native-tls="0.2"
 
 [target.'cfg(windows)'.dependencies]
 dunce = "1"
+webview2-com = "0.39"
+windows-core = "0.62"
 windows= {version="0.61",features= ["Foundation", "Foundation_Collections", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage", "Storage_Streams", "Win32_System_WinRT"] }

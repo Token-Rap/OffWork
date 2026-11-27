@@ -4,7 +4,7 @@
 use crate::model::{Autostart, Model, VERSION};
 use crate::updater::{self, UpdateView};
 use crate::{autostart, calendar, tray, window};
-use chrono::{Datelike, Local, Timelike};
+use chrono::{DateTime, Datelike, Local, TimeZone, Timelike};
 use offwork_core::edit::{self, Commit, Field, Fields};
 use offwork_core::resignation::remaining_workdays;
 use offwork_core::{EndMode, Phase, Settings};
@@ -75,10 +75,7 @@ pub fn state(app: AppHandle) -> View {
     view(&app, None)
 }
 
-#[tauri::command]
-pub fn tick(model: State<Model>) -> Result<Tick, String> {
-    let s = model.current();
-    let now = Local::now();
+fn tick_at(s: &Settings, now: DateTime<Local>) -> Result<Tick, String> {
     let w = s
         .workday(now.num_seconds_from_midnight() as i32)
         .map_err(|_| edit::VALIDATION_MESSAGE.to_owned())?;
@@ -98,6 +95,35 @@ pub fn tick(model: State<Model>) -> Result<Tick, String> {
         date: format!("{}月{}日 周{weekday}", now.month(), now.day()),
         time: now.format("%H:%M:%S").to_string(),
     })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Ticks {
+    /// Unix milliseconds of `ticks[0]` (a whole second).
+    start_ms: i64,
+    ticks: Vec<Tick>,
+}
+
+/// The next `count` seconds of the clock, computed by the core rules for
+/// each local second (DST and midnight included). The widget plays them
+/// back and asks again about once a minute, instead of one IPC round trip
+/// per second, which kept WebView2 allocating while it ran for hours.
+fn ticks_from(s: &Settings, now: DateTime<Local>, count: u32) -> Result<Ticks, String> {
+    let start = now.timestamp();
+    let ticks = (0..i64::from(count.clamp(1, 120)))
+        .filter_map(|i| Local.timestamp_opt(start + i, 0).single())
+        .map(|t| tick_at(s, t))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Ticks {
+        start_ms: start * 1000,
+        ticks,
+    })
+}
+
+#[tauri::command]
+pub fn ticks(model: State<Model>, count: u32) -> Result<Ticks, String> {
+    ticks_from(&model.current(), Local::now(), count)
 }
 
 /// Runs one serialized edit and returns the new view (with any error).
@@ -229,7 +255,8 @@ pub fn measure_mark(name: &str) {
 /// Measurement hooks for scripts/measure.py and the smoke tests
 /// (OFFWORK_MEASURE=<dir>): `frame` after the first paint; touching
 /// `open-calendar` opens the calendar through the real UI path and
-/// `cancel-calendar` cancels it from inside the popup; touching `hide`
+/// `cancel-calendar` cancels it from inside the popup; `layout-check` makes
+/// the widget expand and report its layout (see `measure_layout`); touching `hide`
 /// hides the widget and writes `hidden` once the main loop has done it.
 #[tauri::command]
 pub fn first_frame(app: AppHandle) {
@@ -240,7 +267,7 @@ pub fn first_frame(app: AppHandle) {
         return;
     }
     std::thread::spawn(move || {
-        let (mut opened, mut cancelled) = (false, false);
+        let (mut opened, mut cancelled, mut checked) = (false, false, false);
         loop {
             if !opened && dir.join("open-calendar").exists() {
                 opened = true;
@@ -250,15 +277,75 @@ pub fn first_frame(app: AppHandle) {
                 cancelled = true;
                 let _ = app.emit_to(calendar::LABEL, "measure-cancel-calendar", ());
             }
+            if !checked && dir.join("layout-check").exists() {
+                checked = true;
+                let _ = app.emit_to("main", "measure-layout-check", ());
+            }
             if dir.join("hide").exists() {
-                if let Some(w) = app.get_webview_window("main") {
-                    if w.hide().is_ok() && matches!(w.is_visible(), Ok(false)) {
-                        let _ = std::fs::write(dir.join("hidden"), []);
-                    }
+                // The same path as × and the tray, including web view suspend.
+                let hidden = window::hide(&app);
+                let invisible = app
+                    .get_webview_window("main")
+                    .is_some_and(|w| matches!(w.is_visible(), Ok(false)));
+                if hidden && invisible {
+                    let _ = std::fs::write(dir.join("hidden"), []);
                 }
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
     });
+}
+
+/// Layout report from the widget (OFFWORK_MEASURE only): what the page saw,
+/// plus the real window and work area in physical pixels, written to
+/// `<dir>/layout.json` for scripts/layout_smoke.py.
+#[tauri::command]
+pub fn measure_layout(window: WebviewWindow, report: serde_json::Value) {
+    let Some(dir) = measure_dir() else {
+        return;
+    };
+    let position = window.outer_position().ok();
+    let size = window.outer_size().ok();
+    let work = window::work_area(&window);
+    let full = serde_json::json!({
+        "page": report,
+        "scale_factor": window.scale_factor().ok(),
+        "window": position.zip(size).map(|(p, s)| serde_json::json!({"x": p.x, "y": p.y, "w": s.width, "h": s.height})),
+        "work_area": work.map(|r| serde_json::json!({"x": r.x, "y": r.y, "w": r.w, "h": r.h})),
+    });
+    let _ = std::fs::write(dir.join("layout.json"), full.to_string());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_batch_is_consecutive_seconds_from_the_core_rules() {
+        let s = Settings {
+            resignation_date: "2026-11-30".into(),
+            show_resignation: true,
+            ..Settings::default()
+        };
+        // Thursday 2026-11-26 17:59:30 local → crosses the 18:00 end.
+        let now = Local.with_ymd_and_hms(2026, 11, 26, 17, 59, 30).unwrap();
+        let batch = ticks_from(&s, now, 60).unwrap();
+        assert_eq!(batch.ticks.len(), 60);
+        assert_eq!(batch.start_ms, now.timestamp() * 1000);
+        assert_eq!(batch.ticks[0].time, "17:59:30");
+        assert_eq!(batch.ticks[0].remaining, 30);
+        assert_eq!(batch.ticks[29].remaining, 1);
+        assert_eq!(batch.ticks[30].phase, offwork_core::Phase::After);
+        assert_eq!(batch.ticks[30].time, "18:00:00");
+        assert_eq!(batch.ticks[0].days, Some(2));
+        // Across midnight the date and the workday count change in the batch.
+        let late = Local.with_ymd_and_hms(2026, 11, 26, 23, 59, 50).unwrap();
+        let batch = ticks_from(&s, late, 20).unwrap();
+        assert_eq!(batch.ticks[0].date, "11月26日 周四");
+        assert_eq!(batch.ticks[10].date, "11月27日 周五");
+        assert_eq!(batch.ticks[10].days, Some(1));
+        assert_eq!(ticks_from(&s, late, 0).unwrap().ticks.len(), 1);
+        assert_eq!(ticks_from(&s, late, 9999).unwrap().ticks.len(), 120);
+    }
 }

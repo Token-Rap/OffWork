@@ -57,7 +57,9 @@ pub fn build(app: &App) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => window::show(app),
-            "hide" => window::hide(app),
+            "hide" => {
+                window::hide(app);
+            }
             "autostart" => {
                 let current = autostart::state(None).enabled;
                 let state = autostart::set(!current);

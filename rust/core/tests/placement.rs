@@ -160,3 +160,59 @@ fn widget_starts_top_right_and_stays_inside_when_expanding() {
     assert_eq!(window_size(150, true), (540.0, 1164.0));
     assert_eq!(window_size(75, false), (270.0, 288.0));
 }
+
+/// Real-machine report: at 1920x1080 / 96 DPI (work area 1920x1032), the
+/// expanded widget was cut off at 125 % and overflowed by 132 px at 150 %.
+#[test]
+fn expanded_widget_fits_every_scale_on_1080p_and_smaller_work_areas() {
+    for (work_w, work_h, dpr) in [
+        (1920, 1032, 1.0),
+        (1366, 728, 1.0),
+        (1280, 600, 1.0),
+        (2560, 1392, 2.0),
+        (1024, 728, 1.25),
+    ] {
+        let work = Rect {
+            x: 0,
+            y: 0,
+            w: work_w,
+            h: work_h,
+        };
+        let logical = (f64::from(work_w) / dpr, f64::from(work_h) / dpr);
+        for scale in [75, 100, 125, 150] {
+            for expanded in [false, true] {
+                let (lw, lh) = fitted_size(scale, expanded, logical);
+                let natural = window_size(scale, expanded);
+                assert!(
+                    lw <= logical.0 && lh <= logical.1,
+                    "{work_w}x{work_h} {scale}% {lw}x{lh}"
+                );
+                // Never shrinks when it already fits.
+                if natural.1 <= logical.1 {
+                    assert_eq!(lh, natural.1.floor(), "{work_w}x{work_h} {scale}%");
+                }
+                let size = ((lw * dpr).round() as i32, (lh * dpr).round() as i32);
+                // Wherever the user left it, clamping keeps it fully inside.
+                for (x, y) in [
+                    (work.right() - size.0 - 16, 16),
+                    (0, work.bottom() - 10),
+                    (work.right(), work.bottom()),
+                ] {
+                    let (x, y) = clamp_into(work, x, y, size);
+                    assert!(
+                        x >= work.x && x + size.0 <= work.right(),
+                        "{work_w}x{work_h} {scale}% x"
+                    );
+                    assert!(
+                        y >= work.y && y + size.1 <= work.bottom(),
+                        "{work_w}x{work_h} {scale}% y={y} h={}",
+                        size.1
+                    );
+                }
+            }
+        }
+    }
+    // The reported cases: 125 % fits as is, 150 % is shortened to the work area.
+    assert_eq!(fitted_size(125, true, (1920.0, 1032.0)), (450.0, 970.0));
+    assert_eq!(fitted_size(150, true, (1920.0, 1032.0)), (540.0, 1032.0));
+}
