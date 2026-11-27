@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    tags: ['v*']
+    tags: ['v0.[1-4].[0-9]+'] # Stable legacy C++ tags through the 0.4 series.
   pull_request:
 
 env:
