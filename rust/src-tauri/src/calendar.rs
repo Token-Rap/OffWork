@@ -4,7 +4,7 @@
 
 use crate::commands::{view, View};
 use crate::model::Model;
-use offwork_core::edit::{self, Commit, Field, Fields};
+use offwork_core::edit::{self, Field, Fields};
 use offwork_core::placement::{self, Rect};
 use serde::{Deserialize, Serialize};
 use tauri::{
@@ -47,21 +47,21 @@ fn today() -> String {
 
 /// Opens (or re-focuses) the popup. A typed date is committed first, so the
 /// popup starts from the saved date, otherwise from today.
+///
+/// Async on purpose: building a WebView2 window inside a synchronous command
+/// deadlocks on Windows (tauri::WebviewWindowBuilder docs). Async commands
+/// run off the main thread, so the builder can hand the work to it.
 #[tauri::command]
-pub fn open_calendar(
+pub async fn open_calendar(
     app: AppHandle,
     window: WebviewWindow,
-    model: State<Model>,
     anchor: Anchor,
     fields: Fields,
 ) -> Result<View, String> {
-    let current = model.current();
-    let mut error = None;
-    match edit::commit(&current, Field::Resignation, &fields) {
-        Commit::Saved(next) => error = model.persist(next).err(),
-        Commit::Rejected(message) => error = Some(message.to_owned()),
-        Commit::Unchanged => {}
-    }
+    let model = app.state::<Model>();
+    let error = model
+        .update(|s| edit::commit(s, Field::Resignation, &fields))
+        .err();
     if let Some(existing) = app.get_webview_window(LABEL) {
         let _ = existing.set_focus();
         return Ok(view(&app, error));
@@ -100,6 +100,7 @@ pub fn open_calendar(
 #[tauri::command]
 pub fn calendar_init(model: State<Model>) -> Init {
     let s = model.current();
+    crate::commands::measure_mark("calendar-opened");
     Init {
         date: s.resignation_date,
         today: today(),
@@ -107,29 +108,34 @@ pub fn calendar_init(model: State<Model>) -> Init {
     }
 }
 
-/// Enter/click saves, 清空日期 clears, Esc / click outside cancels.
+/// Enter/click saves, 清空日期 clears, Esc / click outside cancels. Returns
+/// the new view like every command the widget applies (the inline Wayland
+/// calendar uses it directly). Async because it destroys a window.
 #[tauri::command]
-pub fn calendar_finish(app: AppHandle, model: State<Model>, finish: Finish) {
-    let current = model.current();
+pub async fn calendar_finish(app: AppHandle, finish: Finish) -> Result<View, String> {
     let date = match finish {
         Finish::Pick { date } => Some(date),
         Finish::Clear => Some(String::new()),
         Finish::Cancel => None,
     };
-    let mut error = None;
-    if let Some(date) = date {
-        let fields = edit::fields(&current).with(Field::Resignation, &date);
-        match edit::commit(&current, Field::Resignation, &fields) {
-            Commit::Saved(next) => error = model.persist(next).err(),
-            Commit::Rejected(m) => error = Some(m.to_owned()),
-            Commit::Unchanged => {}
-        }
-    }
+    let error = match date {
+        Some(date) => app
+            .state::<Model>()
+            .update(|s| {
+                let fields = edit::fields(s).with(Field::Resignation, &date);
+                edit::commit(s, Field::Resignation, &fields)
+            })
+            .err(),
+        None => None,
+    };
     close(&app);
     if let Some(main) = app.get_webview_window("main") {
         let _ = main.set_focus();
     }
-    let _ = app.emit_to("main", "calendar-closed", view(&app, error));
+    let result = view(&app, error);
+    let _ = app.emit_to("main", "calendar-closed", result.clone());
+    crate::commands::measure_mark("calendar-closed");
+    Ok(result)
 }
 
 pub fn close(app: &AppHandle) {

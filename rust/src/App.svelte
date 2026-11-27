@@ -4,7 +4,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import Calendar from "./Calendar.svelte";
-  import { filterText, type EndMode, type Field, type Fields, type Tick, type View } from "./types";
+  import { filterText, isView, type EndMode, type Field, type Fields, type Tick, type View } from "./types";
 
   const win = getCurrentWindow();
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -41,9 +41,12 @@
       error = String(e);
     }
   }
+  // Applies a command's View. Anything else is an error, never a blank widget.
   async function call(cmd: string, args: Record<string, unknown> = {}, keep: Field | null = null) {
     try {
-      show(await invoke<View>(cmd, args), keep);
+      const next = await invoke<unknown>(cmd, args);
+      if (!isView(next)) throw new Error(`${cmd} 返回了无效数据`);
+      show(next, keep);
       await refresh();
     } catch (e) {
       error = String(e);
@@ -171,6 +174,14 @@
         }),
       );
       clean.push(await listen<View["update"]>("update", (e) => view && (view.update = e.payload)));
+      // Smoke-test hook (OFFWORK_MEASURE): open the calendar the way F4 does.
+      clean.push(
+        await listen("measure-open-calendar", async () => {
+          if (!expanded) await panel(true);
+          await rendered();
+          await openCalendar();
+        }),
+      );
       clean.push(
         await listen<string>("ocr-error", async (e) => {
           if (!expanded) await panel(true);
@@ -239,7 +250,7 @@
           aria-label={view.update.installs ? `下载并安装 ${view.update.available}` : `查看新版本 ${view.update.available}`}
           title={view.update.error ?? `发现新版本 ${view.update.available}`}
           disabled={view.update.downloading}
-          onclick={() => call("start_update").catch(() => {})}
+          onclick={() => call("start_update")}
         >
           {view.update.downloading ? (view.update.percent >= 0 ? `${view.update.percent}%` : "下载中") : "↑ 更新"}
         </button>

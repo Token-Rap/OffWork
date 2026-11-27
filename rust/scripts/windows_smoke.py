@@ -66,12 +66,13 @@ def processes() -> list[str]:
     return [line for line in out.splitlines() if line.startswith('"OffWork.exe"')]
 
 
-def install(setup: Path, label: str) -> None:
+def install(setup: Path, label: str, *extra: str, expect_success: bool = True) -> int:
     start = time.monotonic()
-    code = subprocess.run([str(setup), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], timeout=300).returncode
-    if code:
+    code = subprocess.run([str(setup), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", *extra], timeout=600).returncode
+    if expect_success and code:
         raise RuntimeError(f"{label} installer exited {code}")
     results[f"{label}_install_seconds"] = round(time.monotonic() - start, 1)
+    return code
 
 
 def main(new_setup: Path) -> None:
@@ -90,6 +91,15 @@ def main(new_setup: Path) -> None:
     legacy_pid = window_pid()
     ini_bytes = ini.read_bytes()
     legacy_size = program.stat().st_size
+
+    # Review finding 2: without the WebView2 Runtime (and no way to get it)
+    # the upgrade must stop before closing or replacing the working 0.4.5.
+    code = install(new_setup, "no_webview2", "/OffWorkTestWebView2=unavailable", expect_success=False)
+    assert code != 0, "upgrade without WebView2 must fail"
+    time.sleep(2)
+    assert window_pid() == legacy_pid, "0.4.5 must keep running"
+    assert program.stat().st_size == legacy_size, "0.4.5 must not be replaced"
+    results["no_webview2_upgrade"] = f"refused with exit {code}; 0.4.5 still running and unchanged"
 
     install(new_setup, "rust_upgrade")
     wait(lambda: program.stat().st_size != legacy_size, "program replaced")
@@ -122,7 +132,13 @@ def main(new_setup: Path) -> None:
 
     # Re-install the same build: the installer closes the Rust app the same
     # way it closed 0.4.5 (WM_ENDSESSION to the legacy window) and relaunches.
-    install(new_setup, "rust_reinstall")
+    # A machine that lacks the runtime gets it from the bundled bootstrapper
+    # before anything is replaced (here the runtime exists, so it is quick).
+    log = Path(os.environ["RUNNER_TEMP"]) / "offwork-webview2-setup.log"
+    install(new_setup, "rust_reinstall", "/OffWorkTestWebView2=missing", f"/LOG={log}")
+    setup_log = log.read_text(encoding="utf-8", errors="replace")
+    assert "WebView2 bootstrapper exited" in setup_log and "ready" in setup_log, setup_log[-2000:]
+    results["webview2_bootstrapper"] = [l.split(":", 3)[-1].strip() for l in setup_log.splitlines() if "WebView2" in l]
     results["relaunched_after"] = wait(lambda: window_pid() not in (None, rust_pid), "relaunch")
     assert json.loads(settings.read_text(encoding="utf-8")) == expected
 

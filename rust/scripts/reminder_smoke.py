@@ -1,7 +1,7 @@
 """Hidden-window reminder smoke: the five-minute reminder fires once, on time,
 while the widget is hidden, and a fresh launch inside the window stays silent.
 
-Settings live in a temporary profile (HOME / XDG_CONFIG_HOME / LOCALAPPDATA),
+Settings live in a temporary profile (OFFWORK_PROFILE_DIR),
 with a fixed end time five minutes after the next whole minute.
 """
 import datetime as dt
@@ -19,14 +19,10 @@ with tempfile.TemporaryDirectory() as temp:
     root = Path(temp)
     measure = root / "measure"
     measure.mkdir()
-    env = {**os.environ, "OFFWORK_MEASURE": str(measure), "HOME": str(root),
-           "XDG_CONFIG_HOME": str(root / ".config"), "LOCALAPPDATA": str(root / "local")}
-    if sys.platform == "win32":
-        settings = root / "local" / "OffWork" / "settings.json"
-    elif sys.platform == "darwin":
-        settings = root / "Library" / "Application Support" / "OffWork" / "settings.json"
-    else:
-        settings = root / ".config" / "offwork" / "settings.json"
+    profile = root / "profile"
+    env = {**os.environ, "OFFWORK_MEASURE": str(measure), "OFFWORK_PROFILE_DIR": str(profile),
+           "HOME": str(root), "XDG_CONFIG_HOME": str(root / ".config")}
+    settings = profile / "settings.json"
     now = dt.datetime.now()
     if now.second > 45:  # leave room for the cold start
         time.sleep(61 - now.second)

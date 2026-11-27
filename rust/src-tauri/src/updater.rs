@@ -223,15 +223,10 @@ fn install(dir: tempfile::TempDir, path: &Path) -> Result<(), String> {
 
 #[cfg(all(unix, not(target_os = "macos")))]
 fn install(_dir: tempfile::TempDir, path: &Path) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
     let image = PathBuf::from(std::env::var_os("APPIMAGE").ok_or("仅 AppImage 支持自动更新")?);
-    let staged = image.with_extension("AppImage.new");
-    std::fs::copy(path, &staged).map_err(|e| e.to_string())?;
-    std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))
-        .map_err(|e| e.to_string())?;
-    std::fs::rename(&staged, &image).map_err(|e| e.to_string())?;
-    std::process::Command::new(&image)
-        .spawn()
+    crate::appimage::stage(path, &image).map_err(|e| format!("无法替换 AppImage：{e}"))?;
+    // Started now, but it waits until this process has exited (below).
+    crate::appimage::relaunch_after_exit(std::process::id(), &image)
         .map_err(|e| format!("无法重新启动：{e}"))?;
     Ok(())
 }
@@ -274,9 +269,16 @@ pub fn poll(app: &AppHandle) {
     });
 }
 
-/// User clicked the update icon.
+/// User clicked the update icon. Returns the widget view like every command
+/// the UI applies; progress then arrives as `update` events.
 #[tauri::command]
-pub fn start_update(app: AppHandle) -> Result<(), String> {
+pub fn start_update(app: AppHandle) -> Result<crate::commands::View, String> {
+    begin_update(&app)?;
+    Ok(crate::commands::view(&app, None))
+}
+
+fn begin_update(app: &AppHandle) -> Result<(), String> {
+    let app = app.clone();
     let state = app.state::<UpdateState>();
     let mut u = state.0.lock().unwrap();
     let info = u.release.clone().ok_or("没有可用的更新")?;
@@ -310,8 +312,8 @@ pub fn start_update(app: AppHandle) -> Result<(), String> {
             Ok(()) => {
                 drop(u);
                 // Windows: the installer closes this process itself. macOS
-                // keeps running until the user replaces the app. AppImage
-                // restarted above.
+                // keeps running until the user replaces the app. AppImage:
+                // exit now; the relaunch waits for this process to be gone.
                 if cfg!(all(unix, not(target_os = "macos"))) {
                     app.exit(0);
                 }

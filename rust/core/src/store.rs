@@ -319,32 +319,123 @@ pub fn open(path: &Path, legacy: Option<&dyn Legacy>, now_unix: u64) -> Loaded {
     }
 }
 
-/// Default locations. Windows keeps the old app directory.
+/// Opens settings when the JSON location may be unknown. Without a place to
+/// save, the legacy settings are still shown (read-only) instead of defaults,
+/// so the user never sees their schedule silently replaced.
+pub fn open_any(path: Option<&Path>, legacy: Option<&dyn Legacy>, now_unix: u64) -> Loaded {
+    if let Some(path) = path {
+        return open(path, legacy, now_unix);
+    }
+    let settings = legacy
+        .filter(|l| l.path().is_file())
+        .and_then(|l| l.read().ok())
+        .unwrap_or_default();
+    Loaded {
+        settings,
+        origin: Origin::ReadOnly("无法确定设置目录".into()),
+    }
+}
+
+/// Default locations. Windows keeps the old app directory and resolves it
+/// with the same Win32 rule as the C++ app (the LocalAppData known folder,
+/// not the LOCALAPPDATA variable a launcher may override).
+///
+/// `OFFWORK_PROFILE_DIR` replaces the whole folder; it exists for the CI
+/// smoke tests, which must not touch the runner's real profile.
 pub mod paths {
     use std::path::PathBuf;
 
+    const OVERRIDE: &str = "OFFWORK_PROFILE_DIR";
+
+    fn overridden(name: &str) -> Option<PathBuf> {
+        std::env::var_os(OVERRIDE)
+            .filter(|v| !v.is_empty())
+            .map(|d| PathBuf::from(d).join(name))
+    }
+
+    #[cfg(windows)]
+    mod win32 {
+        use std::os::windows::ffi::OsStringExt;
+        use std::path::PathBuf;
+        use windows_sys::Win32::System::Com::CoTaskMemFree;
+        use windows_sys::Win32::System::SystemInformation::GetWindowsDirectoryW;
+        use windows_sys::Win32::UI::Shell::{
+            FOLDERID_LocalAppData, SHGetKnownFolderPath, KF_FLAG_CREATE,
+        };
+
+        /// `SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_CREATE)`, as
+        /// `SettingsFilePath()` in src/settings.cpp.
+        pub fn local_app_data() -> Option<PathBuf> {
+            let mut raw = std::ptr::null_mut();
+            // SAFETY: on success the shell allocates a NUL-terminated wide
+            // string that we copy and free with CoTaskMemFree exactly once.
+            unsafe {
+                let hr = SHGetKnownFolderPath(
+                    &FOLDERID_LocalAppData,
+                    KF_FLAG_CREATE as _,
+                    std::ptr::null_mut(),
+                    &mut raw,
+                );
+                if hr < 0 || raw.is_null() {
+                    if !raw.is_null() {
+                        CoTaskMemFree(raw as _);
+                    }
+                    return None;
+                }
+                let len = (0..).take_while(|&i| *raw.add(i) != 0).count();
+                let path = std::ffi::OsString::from_wide(std::slice::from_raw_parts(raw, len));
+                CoTaskMemFree(raw as _);
+                Some(PathBuf::from(path))
+            }
+        }
+
+        /// Where the profile API puts a relative file name.
+        pub fn windows_dir() -> Option<PathBuf> {
+            let mut buf = [0u16; 260];
+            // SAFETY: the buffer length is passed and the result is bounded by it.
+            let n = unsafe { GetWindowsDirectoryW(buf.as_mut_ptr(), buf.len() as u32) } as usize;
+            (n > 0 && n < buf.len())
+                .then(|| PathBuf::from(std::ffi::OsString::from_wide(&buf[..n])))
+        }
+    }
+
+    #[cfg(windows)]
+    pub fn local_app_data() -> Option<PathBuf> {
+        win32::local_app_data()
+    }
+
     #[cfg(windows)]
     pub fn settings_json() -> Option<PathBuf> {
-        std::env::var_os("LOCALAPPDATA")
-            .map(|d| PathBuf::from(d).join("OffWork").join("settings.json"))
+        overridden("settings.json").or_else(|| {
+            Some(
+                win32::local_app_data()?
+                    .join("OffWork")
+                    .join("settings.json"),
+            )
+        })
     }
-    /// `%LOCALAPPDATA%\OffWork\settings.ini`; when that folder is unknown the
-    /// C++ app used the relative name `OffWork.ini`, which the profile API
-    /// resolves in the Windows directory.
+    /// `%LocalAppData%\OffWork\settings.ini`; when that known folder is
+    /// unavailable the C++ app used the relative name `OffWork.ini`, which the
+    /// profile API resolves in the Windows directory.
     #[cfg(windows)]
     pub fn legacy_ini() -> Option<PathBuf> {
-        match std::env::var_os("LOCALAPPDATA") {
-            Some(d) => Some(PathBuf::from(d).join("OffWork").join("settings.ini")),
-            None => std::env::var_os("WINDIR").map(|w| PathBuf::from(w).join("OffWork.ini")),
-        }
+        overridden("settings.ini").or_else(|| match win32::local_app_data() {
+            Some(d) => Some(d.join("OffWork").join("settings.ini")),
+            None => Some(win32::windows_dir()?.join("OffWork.ini")),
+        })
     }
     #[cfg(target_os = "macos")]
     pub fn settings_json() -> Option<PathBuf> {
-        std::env::var_os("HOME")
-            .map(|h| PathBuf::from(h).join("Library/Application Support/OffWork/settings.json"))
+        overridden("settings.json").or_else(|| {
+            std::env::var_os("HOME")
+                .map(|h| PathBuf::from(h).join("Library/Application Support/OffWork/settings.json"))
+        })
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     pub fn settings_json() -> Option<PathBuf> {
+        if let Some(path) = overridden("settings.json") {
+            return Some(path);
+        }
         let base = std::env::var_os("XDG_CONFIG_HOME")
             .filter(|v| !v.is_empty())
             .map(PathBuf::from)

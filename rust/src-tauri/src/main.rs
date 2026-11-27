@@ -1,4 +1,6 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+#[cfg(all(unix, any(test, not(target_os = "macos"))))]
+mod appimage;
 mod autostart;
 mod calendar;
 mod commands;
@@ -11,7 +13,7 @@ mod window;
 
 use chrono::{Local, Timelike};
 use model::Model;
-use offwork_core::edit;
+use offwork_core::edit::{self, Commit};
 use offwork_core::reminder::{seconds_since_shift_end, ReminderState};
 use offwork_core::store::{self, Legacy, LegacyIni};
 use std::path::PathBuf;
@@ -75,9 +77,13 @@ fn drop_image(app: AppHandle, paths: &[PathBuf]) {
     }
     std::thread::spawn(move || {
         let model = app.state::<Model>();
+        // Recognition is slow; the apply step is one serialized edit on the
+        // latest settings, so a manual change made meanwhile is kept.
         let result = ocr::recognize(&path).and_then(|minutes| {
-            let next = edit::apply_clock_in(&model.current(), minutes).map_err(str::to_owned)?;
-            model.persist(next)
+            model.update(|s| match edit::apply_clock_in(s, minutes) {
+                Ok(next) => Commit::Saved(next),
+                Err(message) => Commit::Rejected(message),
+            })
         });
         model.ocr_busy.store(false, Ordering::SeqCst);
         match result {
@@ -134,13 +140,11 @@ fn open_settings() -> (Option<PathBuf>, store::Loaded) {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
-    let loaded = match &path {
-        Some(path) => store::open(path, legacy.as_ref().map(|l| l as &dyn Legacy), now),
-        None => store::Loaded {
-            settings: Default::default(),
-            origin: store::Origin::ReadOnly("无法确定设置目录".into()),
-        },
-    };
+    let loaded = store::open_any(
+        path.as_deref(),
+        legacy.as_ref().map(|l| l as &dyn Legacy),
+        now,
+    );
     (path, loaded)
 }
 

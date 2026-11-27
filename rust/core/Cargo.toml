@@ -13,4 +13,4 @@ sha2 = "0.10"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_WindowsProgramming"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_WindowsProgramming", "Win32_System_Com", "Win32_System_SystemInformation", "Win32_UI_Shell"] }

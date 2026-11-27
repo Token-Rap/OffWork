@@ -68,7 +68,13 @@ jobs:
           $numeric = ($version -split '-')[0]
           $exe = (Resolve-Path target/release/offwork.exe).Path
           $out = Join-Path (Get-Location) target/installer
-          & $iscc "/DAppVersion=$version" "/DNumericVersion=$numeric" "/DSourceExe=$exe" "/DOutputPath=$out" ..\installer\offwork.iss
+          # Microsoft's Evergreen WebView2 bootstrapper, bundled so the installer
+          # can add the runtime before replacing 0.4.x. Must be Microsoft-signed.
+          $bootstrapper = Join-Path (Get-Location) target/MicrosoftEdgeWebview2Setup.exe
+          Invoke-WebRequest "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile $bootstrapper
+          $sig = Get-AuthenticodeSignature $bootstrapper
+          if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') { throw "Unexpected WebView2 bootstrapper signature: $($sig.Status) $($sig.SignerCertificate.Subject)" }
+          & $iscc "/DAppVersion=$version" "/DNumericVersion=$numeric" "/DSourceExe=$exe" "/DOutputPath=$out" "/DWebView2Bootstrapper=$bootstrapper" ..\installer\offwork.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed with $LASTEXITCODE" }
       - if: runner.os == 'Linux'
         name: Real GTK drag-and-drop into the release widget under Xvfb
@@ -80,6 +86,14 @@ jobs:
       - if: runner.os == 'Windows'
         name: Install 0.4.5, upgrade to the Rust build, migrate, reinstall, uninstall
         run: python scripts/windows_smoke.py artifacts/OffWork-Setup.exe
+      - name: Calendar popup opens and closes without blocking the main loop
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Linux) dbus-run-session -- xvfb-run -a python scripts/calendar_smoke.py target/release/offwork ;;
+            Windows) python scripts/calendar_smoke.py target/release/offwork.exe ;;
+            macOS) python scripts/calendar_smoke.py target/release/bundle/macos/OffWork.app/Contents/MacOS/offwork ;;
+          esac
       - name: Hidden-window five-minute reminder fires once, on time
         shell: bash
         run: |

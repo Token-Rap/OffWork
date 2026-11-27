@@ -135,6 +135,11 @@ Name: "autostart"; Description: "{cm:EnableAutostart}"; GroupDescription: "{cm:S
 
 [Files]
 Source: "{#SourceExe}"; DestDir: "{app}"; DestName: "{#AppExeName}"; Flags: ignoreversion
+#ifdef WebView2Bootstrapper
+; The Rust/Tauri build needs the Edge WebView2 Runtime. The Evergreen
+; bootstrapper is only extracted when the runtime is missing (see [Code]).
+Source: "{#WebView2Bootstrapper}"; DestName: "MicrosoftEdgeWebview2Setup.exe"; Flags: dontcopy
+#endif
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"
@@ -196,9 +201,68 @@ begin
     Log('OffWork did not exit within 8 seconds.');
 end;
 
+#ifdef WebView2Bootstrapper
+// The Rust build cannot show a window without the WebView2 Runtime. Ensure it
+// BEFORE closing and replacing a working 0.4.x, so a machine without the
+// runtime (and without network) keeps its old OffWork untouched.
+const
+  WebView2Client = 'Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
+
+function WebView2Installed(): Boolean;
+var
+  Version: String;
+begin
+  // /OffWorkTestWebView2=missing|unavailable lets CI simulate a machine
+  // without the runtime; "unavailable" also skips the bootstrapper.
+  if ExpandConstant('{param:OffWorkTestWebView2|}') <> '' then
+  begin
+    Result := False;
+    Exit;
+  end;
+  Result := (RegQueryStringValue(HKLM32, WebView2Client, 'pv', Version) or
+             RegQueryStringValue(HKLM64, WebView2Client, 'pv', Version) or
+             RegQueryStringValue(HKCU, WebView2Client, 'pv', Version)) and
+            (Version <> '') and (Version <> '0.0.0.0');
+end;
+
+function EnsureWebView2(): String;
+var
+  Mode: String;
+  Code: Integer;
+begin
+  Result := '';
+  if WebView2Installed() then Exit;
+  Mode := Lowercase(ExpandConstant('{param:OffWorkTestWebView2|}'));
+  Log('WebView2 Runtime not found (test mode: ' + Mode + ')');
+  if Mode <> 'unavailable' then
+  begin
+    ExtractTemporaryFile('MicrosoftEdgeWebview2Setup.exe');
+    if Exec(ExpandConstant('{tmp}\MicrosoftEdgeWebview2Setup.exe'), '/silent /install', '',
+            SW_HIDE, ewWaitUntilTerminated, Code) then
+      Log('WebView2 bootstrapper exited ' + IntToStr(Code))
+    else
+      Log('WebView2 bootstrapper could not start');
+    // Re-check the real registry, ignoring the test switch.
+    if RegQueryStringValue(HKLM32, WebView2Client, 'pv', Mode) or
+       RegQueryStringValue(HKLM64, WebView2Client, 'pv', Mode) or
+       RegQueryStringValue(HKCU, WebView2Client, 'pv', Mode) then
+      if (Mode <> '') and (Mode <> '0.0.0.0') then
+      begin
+        Log('WebView2 Runtime ' + Mode + ' ready');
+        Exit;
+      end;
+  end;
+  Result := 'OffWork 需要 Microsoft Edge WebView2 Runtime, 但未能安装 (可能没有网络)。原有的 OffWork 没有被改动。请联网后重新运行安装程序。';
+end;
+#endif
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
+#ifdef WebView2Bootstrapper
+  Result := EnsureWebView2();
+  if Result <> '' then Exit;
+#endif
   if not CloseRunningOffWork() then
     Result := 'OffWork 仍在运行, 无法更新。请在托盘图标上右键选择「退出」, 然后重新运行安装程序。';
 end;

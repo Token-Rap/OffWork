@@ -304,3 +304,49 @@ fn nix_root() -> bool {
         .output()
         .is_ok_and(|o| o.stdout.starts_with(b"0\n"))
 }
+
+#[test]
+fn unknown_settings_folder_still_shows_the_legacy_settings_read_only() {
+    // Review finding 6: with no JSON location the WINDIR fallback INI used
+    // to be computed but never read.
+    let h = home(Some(&legacy_text(&user_settings())));
+    let loaded = store::open_any(None, Some(&LegacyIni(h.ini.clone()) as &dyn Legacy), 1);
+    assert_eq!(loaded.settings, user_settings());
+    assert!(!loaded.writable());
+    assert_eq!(
+        std::fs::read_to_string(&h.ini).unwrap(),
+        legacy_text(&user_settings())
+    );
+    let none = store::open_any(None, None, 1);
+    assert_eq!(none.settings, Settings::default());
+    // With a location it is the normal import.
+    assert_eq!(
+        store::open_any(
+            Some(&h.json),
+            Some(&LegacyIni(h.ini.clone()) as &dyn Legacy),
+            1
+        )
+        .origin,
+        Origin::Migrated(h.ini.clone())
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn legacy_path_follows_the_known_folder_not_the_environment() {
+    // Review finding 6: the C++ app used SHGetKnownFolderPath, so a launcher
+    // that overrides LOCALAPPDATA must not change where 0.4.5's INI is read.
+    let real = store::paths::local_app_data().unwrap();
+    let bogus = tempfile::tempdir().unwrap();
+    let saved = std::env::var_os("LOCALAPPDATA");
+    std::env::set_var("LOCALAPPDATA", bogus.path());
+    let ini = store::paths::legacy_ini().unwrap();
+    let json = store::paths::settings_json().unwrap();
+    match saved {
+        Some(v) => std::env::set_var("LOCALAPPDATA", v),
+        None => std::env::remove_var("LOCALAPPDATA"),
+    }
+    assert_eq!(ini, real.join("OffWork").join("settings.ini"));
+    assert_eq!(json, real.join("OffWork").join("settings.json"));
+    assert!(!ini.starts_with(bogus.path()));
+}

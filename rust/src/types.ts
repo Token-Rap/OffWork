@@ -74,3 +74,11 @@ export function filterText(field: Field, text: string, mode: EndMode): string {
   }
   return out.slice(0, field === "end" && mode === "duration" ? 5 : spec.max);
 }
+
+/** Every command the widget applies with `show()` must return a full View.
+ * A unit or null result used to blank the widget (review finding 4). */
+export function isView(value: unknown): value is View {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Partial<View>;
+  return !!v.settings && !!v.fields && !!v.update && !!v.autostart && typeof v.version === "string";
+}

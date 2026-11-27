@@ -10,7 +10,7 @@ use offwork_core::resignation::remaining_workdays;
 use offwork_core::{EndMode, Phase, Settings};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::Ordering;
-use tauri::{AppHandle, Manager, State, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -100,33 +100,37 @@ pub fn tick(model: State<Model>) -> Result<Tick, String> {
     })
 }
 
-fn apply(app: &AppHandle, outcome: Commit) -> View {
-    let error = match outcome {
-        Commit::Saved(next) => app.state::<Model>().persist(next).err(),
-        Commit::Rejected(message) => Some(message.to_owned()),
-        Commit::Unchanged => None,
-    };
+/// Runs one serialized edit and returns the new view (with any error).
+fn apply<F: FnOnce(&Settings) -> Commit>(app: &AppHandle, edit: F) -> View {
+    let error = app.state::<Model>().update(edit).err();
     view(app, error)
 }
 
 /// Blur / Enter on one field.
 #[tauri::command]
 pub fn commit_field(app: AppHandle, field: Field, fields: Fields) -> View {
-    let current = app.state::<Model>().current();
-    apply(&app, edit::commit(&current, field, &fields))
+    apply(&app, |s| edit::commit(s, field, &fields))
 }
 
 /// A keystroke in the end or lunch fields: saves only complete, valid input.
 #[tauri::command]
 pub fn live_field(app: AppHandle, field: Field, fields: Fields) -> Option<View> {
-    let current = app.state::<Model>().current();
-    edit::live(&current, field, &fields).map(|next| apply(&app, Commit::Saved(next)))
+    let result = app
+        .state::<Model>()
+        .update(|s| match edit::live(s, field, &fields) {
+            Some(next) => Commit::Saved(next),
+            None => Commit::Unchanged,
+        });
+    match result {
+        Ok(None) => None,
+        Ok(Some(_)) => Some(view(&app, None)),
+        Err(e) => Some(view(&app, Some(e))),
+    }
 }
 
 #[tauri::command]
 pub fn set_end_mode(app: AppHandle, mode: EndMode, fields: Fields) -> View {
-    let current = app.state::<Model>().current();
-    apply(&app, edit::switch_end_mode(&current, mode, &fields))
+    apply(&app, |s| edit::switch_end_mode(s, mode, &fields))
 }
 
 #[derive(Deserialize)]
@@ -140,13 +144,15 @@ pub enum Toggle {
 /// Display toggles save immediately and never reset the reminder.
 #[tauri::command]
 pub fn toggle(app: AppHandle, flag: Toggle) -> View {
-    let mut s = app.state::<Model>().current();
-    match flag {
-        Toggle::HideEarned => s.hide_earned = !s.hide_earned,
-        Toggle::DeductLunch => s.deduct_lunch = !s.deduct_lunch,
-        Toggle::ShowResignation => s.show_resignation = !s.show_resignation,
-    }
-    apply(&app, Commit::Saved(s))
+    apply(&app, |current| {
+        let mut s = current.clone();
+        match flag {
+            Toggle::HideEarned => s.hide_earned = !s.hide_earned,
+            Toggle::DeductLunch => s.deduct_lunch = !s.deduct_lunch,
+            Toggle::ShowResignation => s.show_resignation = !s.show_resignation,
+        }
+        Commit::Saved(s)
+    })
 }
 
 /// Scale 75–150 % and opacity 25–100 %. `persist` is false while dragging.
@@ -159,21 +165,23 @@ pub fn set_window(
     persist: bool,
 ) -> View {
     let model = app.state::<Model>();
-    let next = Settings {
-        scale_percent: scale,
-        opacity_percent: opacity,
-        ..model.current()
-    }
-    .normalized();
+    let with_prefs = |s: &Settings| {
+        Settings {
+            scale_percent: scale,
+            opacity_percent: opacity,
+            ..s.clone()
+        }
+        .normalized()
+    };
+    let next = model.preview(with_prefs);
     window::fit(
         &window,
         next.scale_percent,
         model.expanded.load(Ordering::SeqCst),
     );
     if persist {
-        apply(&app, Commit::Saved(next))
+        apply(&app, |s| Commit::Saved(with_prefs(s)))
     } else {
-        *model.settings.lock().unwrap() = next;
         view(&app, None)
     }
 }
@@ -207,24 +215,50 @@ pub fn set_autostart(app: AppHandle, enabled: bool) -> View {
     view_with(&app, state.error.clone(), Some(state))
 }
 
-/// Measurement hook for scripts/measure.py (OFFWORK_MEASURE=<dir>).
+fn measure_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("OFFWORK_MEASURE").map(std::path::PathBuf::from)
+}
+
+/// Measurement hook: records that a step happened (`<dir>/<name>`).
+pub fn measure_mark(name: &str) {
+    if let Some(dir) = measure_dir() {
+        let _ = std::fs::write(dir.join(name), []);
+    }
+}
+
+/// Measurement hooks for scripts/measure.py and the smoke tests
+/// (OFFWORK_MEASURE=<dir>): `frame` after the first paint; touching
+/// `open-calendar` opens the calendar through the real UI path and
+/// `cancel-calendar` cancels it from inside the popup; touching `hide`
+/// hides the widget and writes `hidden` once the main loop has done it.
 #[tauri::command]
 pub fn first_frame(app: AppHandle) {
-    let Some(dir) = std::env::var_os("OFFWORK_MEASURE").map(std::path::PathBuf::from) else {
+    let Some(dir) = measure_dir() else {
         return;
     };
     if std::fs::write(dir.join("frame"), []).is_err() {
         return;
     }
-    std::thread::spawn(move || loop {
-        if dir.join("hide").exists() {
-            if let Some(w) = app.get_webview_window("main") {
-                if w.hide().is_ok() && matches!(w.is_visible(), Ok(false)) {
-                    let _ = std::fs::write(dir.join("hidden"), []);
-                }
+    std::thread::spawn(move || {
+        let (mut opened, mut cancelled) = (false, false);
+        loop {
+            if !opened && dir.join("open-calendar").exists() {
+                opened = true;
+                let _ = app.emit_to("main", "measure-open-calendar", ());
             }
-            break;
+            if !cancelled && dir.join("cancel-calendar").exists() {
+                cancelled = true;
+                let _ = app.emit_to(calendar::LABEL, "measure-cancel-calendar", ());
+            }
+            if dir.join("hide").exists() {
+                if let Some(w) = app.get_webview_window("main") {
+                    if w.hide().is_ok() && matches!(w.is_visible(), Ok(false)) {
+                        let _ = std::fs::write(dir.join("hidden"), []);
+                    }
+                }
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
-        std::thread::sleep(std::time::Duration::from_millis(100));
     });
 }
