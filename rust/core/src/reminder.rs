@@ -1,44 +1,78 @@
-use crate::{Phase, Snapshot};
+//! Port of `src/reminder.cpp`. Pure: no clock and no I/O. The shell feeds one
+//! observation per tick (also after sleep/wake) and notifies when told to.
+//! Every operation returns a new state.
 
-#[derive(Default)]
-pub struct Reminder {
-    previous: Option<(Phase, i32, i64)>,
-    five_handled: bool,
+use crate::schedule::{Phase, SECONDS_PER_DAY};
+
+/// A transition first observed later than this after the end time is stale
+/// (asleep, locked, clock jump) and stays silent. Inclusive.
+pub const GRACE_SECONDS: i32 = 10 * 60;
+pub const FIVE_MINUTES: i32 = 5 * 60;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ReminderState {
+    pub initialized: bool,
+    pub last_phase: Option<Phase>,
+    pub last_remaining: Option<i32>,
+    pub last_since_end: Option<i32>,
+    pub five_minutes_handled: bool,
 }
 
-#[derive(Debug, PartialEq)]
-pub enum Notice {
-    FiveMinutes,
-    Finished,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Decision {
+    pub next: ReminderState,
+    pub notify_end: bool,
+    pub notify_five_minutes: bool,
 }
 
-impl Reminder {
-    pub fn observe(
-        &mut self,
-        snapshot: &Snapshot,
-        timestamp: i64,
-        seconds_since_end: i32,
-    ) -> Option<Notice> {
-        let current = (snapshot.phase, snapshot.remaining, timestamp);
-        let previous = self.previous.replace(current);
-        if !matches!(previous, Some((Phase::Working, _, _))) {
-            self.five_handled = snapshot.remaining <= 300;
-            return None;
+/// Seconds since the most recent end-of-shift moment, in `[0, 86400)`.
+pub fn seconds_since_shift_end(now_seconds: i32, end_minutes: i32) -> i32 {
+    (now_seconds - end_minutes * 60).rem_euclid(SECONDS_PER_DAY)
+}
+
+impl ReminderState {
+    /// Baseline without notifying: at startup and whenever the schedule changes.
+    pub fn reset(phase: Phase, remaining: Option<i32>) -> Self {
+        Self {
+            initialized: true,
+            last_phase: Some(phase),
+            last_remaining: remaining,
+            last_since_end: None,
+            five_minutes_handled: remaining.is_some_and(|r| (0..=FIVE_MINUTES).contains(&r)),
         }
-        if snapshot.phase == Phase::After && seconds_since_end <= 600 {
-            return Some(Notice::Finished);
+    }
+
+    /// One tick. The end reminder needs a fresh Working → After transition;
+    /// the five-minute reminder needs the REAL remaining time to cross 300 s
+    /// while working (lunch included). Startup, reset and stale ticks stay silent.
+    pub fn tick(&self, phase: Phase, since_end: i32, remaining: Option<i32>) -> Decision {
+        let mut next = Self::reset(phase, remaining);
+        next.last_since_end = Some(since_end);
+        let mut decision = Decision {
+            next,
+            notify_end: false,
+            notify_five_minutes: false,
+        };
+        if !self.initialized {
+            return decision;
         }
-        if let Some((_, remaining, time)) = previous {
-            if snapshot.phase == Phase::Working && snapshot.remaining <= 300 {
-                let notify = !self.five_handled
-                    && remaining > 300
-                    && (0..=600).contains(&(timestamp - time));
-                self.five_handled = true;
-                if notify {
-                    return Some(Notice::FiveMinutes);
-                }
+        let was_working = self.last_phase == Some(Phase::Working);
+        if was_working && phase == Phase::Working {
+            decision.next.five_minutes_handled = self.five_minutes_handled;
+            if remaining.is_some_and(|r| (0..=FIVE_MINUTES).contains(&r)) {
+                let gap = self
+                    .last_since_end
+                    .map_or(0, |last| (since_end - last).rem_euclid(SECONDS_PER_DAY));
+                decision.notify_five_minutes = !self.five_minutes_handled
+                    && self.last_remaining.is_some_and(|r| r > FIVE_MINUTES)
+                    && gap <= GRACE_SECONDS;
+                // Consume even a stale crossing so later ticks cannot catch up.
+                decision.next.five_minutes_handled = true;
             }
         }
-        None
+        // Rearming is implicit: any Working tick makes the next After a
+        // transition again. Overnight shifts never report Before.
+        decision.notify_end = was_working && phase == Phase::After && since_end <= GRACE_SECONDS;
+        decision
     }
 }
