@@ -20,6 +20,7 @@ import time
 import urllib.request
 import winreg
 
+sys.stdout.reconfigure(encoding="utf-8")  # Windows consoles default to cp1252
 LEGACY_SETUP = "https://github.com/Token-Rap/OffWork/releases/download/v0.4.5/OffWork-Setup.exe"
 CLASS = "OffWork.Native.Widget"
 UNINSTALL = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{8F3A1C2E-5B47-4D9A-9E61-7C0D2A6F4B83}_is1"

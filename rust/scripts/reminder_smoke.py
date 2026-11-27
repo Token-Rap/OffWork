@@ -13,6 +13,7 @@ import sys
 import tempfile
 import time
 
+sys.stdout.reconfigure(encoding="utf-8")  # Windows consoles default to cp1252
 binary = Path(sys.argv[1]).resolve()
 with tempfile.TemporaryDirectory() as temp:
     root = Path(temp)
