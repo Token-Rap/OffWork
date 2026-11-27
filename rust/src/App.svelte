@@ -27,15 +27,23 @@
   let resizing: { x: number; scale: number } | null = null;
   let mainEl = $state<HTMLElement>();
   let panelEl = $state<HTMLElement>();
-  let bodyEl = $state<HTMLElement>();
 
   /** Scrolls to the end and checks the last control is inside the window. */
   function layoutReport() {
-    for (const el of [panelEl, bodyEl]) if (el) el.scrollTop = el.scrollHeight;
+    if (panelEl) panelEl.scrollTop = panelEl.scrollHeight;
     const rect = (el: Element | null | undefined) => {
       const r = el?.getBoundingClientRect();
       return r ? { top: r.top, bottom: r.bottom, left: r.left, right: r.right } : null;
     };
+    const box = (el: Element | null | undefined) =>
+      el
+        ? {
+            scrollWidth: el.scrollWidth,
+            clientWidth: el.clientWidth,
+            scrollHeight: el.scrollHeight,
+            clientHeight: el.clientHeight,
+          }
+        : null;
     const controls = Array.from(panelEl?.querySelectorAll("input, button, select") ?? []);
     // Really visible: the top-most element at its centre is it (or inside it),
     // which catches clipping by any ancestor, not just the window edge.
@@ -50,7 +58,9 @@
       viewport: { width: innerWidth, height: innerHeight },
       scale: s?.scalePercent,
       main: rect(mainEl),
-      panel: panelEl ? { ...rect(panelEl), scrollHeight: panelEl.scrollHeight, clientHeight: panelEl.clientHeight } : null,
+      // No horizontal overflow on the page root or the settings panel at any scale.
+      root: box(document.documentElement),
+      panel: panelEl ? { ...rect(panelEl), ...box(panelEl)! } : null,
       lastControl: rect(controls.at(-1)),
       status: rect(panelEl?.querySelector(".status")),
       controls: controls.length,
@@ -332,7 +342,7 @@
       </button>
       <button aria-label={view?.tray ? "隐藏到托盘" : "退出"} onclick={() => win.close()}>×</button>
     </header>
-    <div class="body" bind:this={bodyEl}>
+    <div class="body">
 
     {#if t && s}
       <section class="summary" aria-label="今日概览">
@@ -476,20 +486,24 @@
     overflow: hidden;
   }
   /* The header (title, drag area, ×) never scrolls away. Below it the
-     summary and settings share the rest; the panel scrolls on its own, and
-     only when even the summary does not fit does the whole body scroll. */
+     summary and settings share the rest; only the settings panel scrolls
+     vertically. Horizontal overflow is clipped — nested body+panel both
+     scrolling made two stacked h-bars when content was a few px wide. */
   header {
     flex-shrink: 0;
   }
   .body {
     flex: 1 1 auto;
+    min-width: 0;
     min-height: 0;
     display: flex;
     flex-direction: column;
-    overflow-y: auto;
+    overflow: hidden;
   }
   .body > :global(*) {
     flex-shrink: 0;
+    min-width: 0;
+    max-width: 100%;
   }
   main.drag {
     outline: 4px dashed #48705a;
@@ -624,9 +638,15 @@
   .body > .panel {
     margin-top: 0;
     flex: 1 1 auto;
+    min-width: 0;
     min-height: 160px;
+    max-width: 100%;
+    overflow-x: hidden;
     overflow-y: auto;
     overscroll-behavior: contain;
+    /* Reserve the vertical scrollbar so content width does not jump and
+       force a horizontal bar when the panel starts scrolling. */
+    scrollbar-gutter: stable;
   }
   @media (prefers-reduced-motion: no-preference) {
     .panel {
@@ -643,9 +663,13 @@
     border-top: 1px dashed #a9aa98;
     padding: 6px 0;
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 5px 12px;
     margin: 2px 0 0;
+    /* Browsers default fieldset min-width to min-content, which blew past
+       the panel and stacked a second horizontal scrollbar. */
+    min-width: 0;
+    max-width: 100%;
   }
   legend {
     font-weight: 600;
@@ -707,6 +731,7 @@
   }
   input[type="range"] {
     width: 100%;
+    min-width: 0;
     accent-color: #48705a;
   }
   .status {

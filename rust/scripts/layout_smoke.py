@@ -1,12 +1,14 @@
 """Expanded-layout smoke at 75/100/125/150 % (real-machine report: at
 1920x1080 the panel was cut off at 125 % and the window overflowed the work
-area by 132 px at 150 %).
+area by 132 px at 150 %; at 75 % nested body+panel scrollers stacked two
+horizontal bars).
 
 For each scale the release app starts with that scale saved, expands its
 settings, scrolls to the end and reports (OFFWORK_MEASURE hook): the window
-must lie inside the monitor work area and the last control must be inside
-the window. Usage: layout_smoke.py <binary> <label>; writes
-artifacts/layout-<label>.json.
+must lie inside the monitor work area, the last control must be inside the
+window, and neither the page root nor the settings panel may have
+horizontal overflow (scrollWidth <= clientWidth). Usage:
+layout_smoke.py <binary> <label>; writes artifacts/layout-<label>.json.
 """
 import json
 import os
@@ -48,6 +50,17 @@ def check(report: dict) -> list[str]:
             problems.append(f"{name} is clipped (hit test at its centre finds another element)")
     if page["controls"] < 10:
         problems.append(f"only {page['controls']} controls in the panel")
+    # Nested scrollers + a few-px-wide fieldset used to stack two h-bars.
+    for name in ("root", "panel"):
+        box = page.get(name)
+        if not box:
+            problems.append(f"{name} scroll metrics missing")
+            continue
+        if box["scrollWidth"] > box["clientWidth"] + TOLERANCE:
+            problems.append(
+                f"{name} horizontal overflow: scrollWidth {box['scrollWidth']} "
+                f"> clientWidth {box['clientWidth']}"
+            )
     return problems
 
 
