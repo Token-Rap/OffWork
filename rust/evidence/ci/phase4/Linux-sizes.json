@@ -1,0 +1,14 @@
+{
+  "OffWork-linux-amd64.deb": {
+    "download_bytes": 5404134,
+    "download_mib": 5.15,
+    "unpacked_bytes": 14440650,
+    "sha256": "5575f861ee3ff709fcf41b2c768ff7c95bac1f33f7e71ea180e3781524c10844"
+  },
+  "OffWork-linux-x86_64.AppImage": {
+    "download_bytes": 84171256,
+    "download_mib": 80.27,
+    "unpacked_bytes": 271476531,
+    "sha256": "3d750f96bedb694770b344941ddfab70f5590dd5bf98e4e45841b1d3aa90bd74"
+  }
+}

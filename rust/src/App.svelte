@@ -12,6 +12,8 @@
   const clock = (s: number) => `${pad(Math.floor(s / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
   const money = (v: number, hide: boolean) => (hide ? "****" : `¥${v.toFixed(2)}`);
   const lunchFields: Field[] = ["lunchStart", "lunchEnd"];
+  // Local civil date (toISOString would give the UTC day around midnight).
+  const localToday = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
   let view = $state<View | null>(null);
   let t = $state<Tick | null>(null);
@@ -327,7 +329,7 @@
           <small id="coverage" class="wide muted">按周一至周五计，不含法定节假日及调休</small>
           {#if inlineCalendar}
             <div class="wide">
-              <Calendar date={s.resignationDate} today={new Date().toISOString().slice(0, 10)}
+              <Calendar date={s.resignationDate} today={localToday()}
                 onpick={(date) => inlineFinish({ action: "pick", date })}
                 onclear={() => inlineFinish({ action: "clear" })}
                 oncancel={() => inlineFinish({ action: "cancel" })} />

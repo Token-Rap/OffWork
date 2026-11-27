@@ -1,3 +1,5 @@
+> Phases 3 and 4 (rules, migration, desktop preview): see [PHASE3-4.md](PHASE3-4.md). The tables below are the phase 2 prototype.
+
 # Phase 2 measurements
 
 Commit measured: `6c6d71c`. CI run: Rust desktop prototype #45868890396 (all three jobs green).
