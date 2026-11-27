@@ -38,10 +38,9 @@ def stage(file: Path, name: str, payload: Path) -> None:
 if sys.platform == "win32":
     exe = release / "offwork.exe"
     stage(exe, "OffWork.exe", exe)
-    setup = Path("target/installer/OffWork-Setup.exe")
-    with tempfile.TemporaryDirectory() as temp:
-        subprocess.run(["7z", "x", str(setup), "-o" + temp], check=True, stdout=subprocess.DEVNULL)
-        stage(setup, "OffWork-Setup.exe", Path(temp))
+    # 7-Zip cannot open Inno Setup archives; the installer's only payload is
+    # this EXE (installer/offwork.iss [Files]), so that is the unpacked size.
+    stage(Path("target/installer/OffWork-Setup.exe"), "OffWork-Setup.exe", exe)
 elif sys.platform == "darwin":
     stage(next(bundle.glob("dmg/*.dmg")), "OffWork-macOS-arm64.dmg", next(bundle.glob("macos/*.app")))
 else:
