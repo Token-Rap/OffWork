@@ -199,6 +199,11 @@ fn main() {
                 WindowEvent::DragDrop(DragDropEvent::Drop { paths, .. }) => {
                     drop_image(app.clone(), paths)
                 }
+                WindowEvent::Resized(_) => {
+                    if let Some(main) = app.get_webview_window("main") {
+                        window::keep_inside(&main);
+                    }
+                }
                 WindowEvent::ScaleFactorChanged { .. } => {
                     // A DPI change moves the popup's anchor: cancel it like the
                     // C++ calendar did, and keep the logical size exact.

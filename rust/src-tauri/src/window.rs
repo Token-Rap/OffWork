@@ -104,15 +104,37 @@ pub fn zoom(w: &WebviewWindow, scale: i32) {
     let _ = w.set_zoom(f64::from(scale.clamp(75, 150)) / 100.0);
 }
 
-/// GTK will not shrink a non-resizable window below the size it was created
-/// with (360 px wide), so 75 % stayed 360 px wide and spilled past the work
-/// area (found by scripts/layout_smoke.py). Allow resizing for the call.
+/// GTK keeps a non-resizable window at the size it was created with (360 px
+/// wide), so 75 % stayed 360 px wide and spilled past the work area (found by
+/// scripts/layout_smoke.py). On Linux the window is resizable and pinned to
+/// the exact size with min = max constraints instead.
 fn resize(w: &WebviewWindow, lw: f64, lh: f64) {
+    let size = LogicalSize::new(lw, lh);
     #[cfg(target_os = "linux")]
-    let _ = w.set_resizable(true);
-    let _ = w.set_size(LogicalSize::new(lw, lh));
+    {
+        let _ = w.set_resizable(true);
+        let _ = w.set_min_size(None::<LogicalSize<f64>>);
+        let _ = w.set_max_size(None::<LogicalSize<f64>>);
+    }
+    let _ = w.set_size(size);
     #[cfg(target_os = "linux")]
-    let _ = w.set_resizable(false);
+    {
+        let _ = w.set_min_size(Some(size));
+        let _ = w.set_max_size(Some(size));
+    }
+}
+
+/// After any real resize (ours, a DPI move, the window manager), keep the
+/// whole window inside the work area using its actual size.
+pub fn keep_inside(w: &WebviewWindow) {
+    let (Ok(pos), Ok(size), Some(work)) = (w.outer_position(), w.outer_size(), work_area(w)) else {
+        return;
+    };
+    let actual = (size.width as i32, size.height as i32);
+    let (x, y) = placement::clamp_into(work, pos.x, pos.y, actual);
+    if (x, y) != (pos.x, pos.y) {
+        let _ = w.set_position(PhysicalPosition::new(x, y));
+    }
 }
 
 /// Logical size for `scale` that fits the current work area.
