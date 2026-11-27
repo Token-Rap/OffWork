@@ -14,6 +14,14 @@
 #ifndef AppVersion
   #error AppVersion must be supplied from the CMake build/app-version.txt
 #endif
+; File version resources take only digits; a preview such as 0.5.0-preview.1
+; passes NumericVersion=0.5.0 (the Rust desktop preview build does).
+#ifndef NumericVersion
+  #define NumericVersion AppVersion
+#endif
+#ifndef OutputPath
+  #define OutputPath "..\build\installer"
+#endif
 
 #define AppName "OffWork"
 #define AppPublisher "alertform"
@@ -28,7 +36,7 @@ AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
 AppPublisher={#AppPublisher}
-VersionInfoVersion={#AppVersion}
+VersionInfoVersion={#NumericVersion}
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
@@ -37,7 +45,7 @@ AllowNoIcons=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-OutputDir=..\build\installer
+OutputDir={#OutputPath}
 OutputBaseFilename=OffWork-Setup
 SetupIconFile=..\resources\offwork.ico
 UninstallDisplayIcon={app}\{#AppExeName}

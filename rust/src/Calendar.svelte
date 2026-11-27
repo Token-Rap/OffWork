@@ -77,7 +77,9 @@
 
 <style>
   .calendar {
+    box-sizing: border-box;
     width: 288px;
+    border: 1px solid #aba992;
     padding: 10px 12px;
     background: var(--paper, #fffbee);
     color: var(--ink, #293e33);
@@ -100,7 +102,7 @@
   }
   .w,
   .row > [role="gridcell"] {
-    width: 36px;
+    width: 35px;
     height: 32px;
     display: grid;
     place-items: center;

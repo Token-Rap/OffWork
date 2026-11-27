@@ -312,7 +312,7 @@
                 bind:this={dateInput}
                 data-field="resignation"
                 value={fields.resignation}
-                placeholder="2026-12-31"
+                placeholder="未设置"
                 inputmode="numeric"
                 aria-describedby="coverage"
                 autocomplete="off"

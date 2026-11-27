@@ -1,19 +1,18 @@
-name: Rust desktop prototype
+name: Rust desktop preview
 on:
   pull_request:
-    paths: ['rust/**', '.github/workflows/rust-prototype.yml']
+    paths: ['rust/**', 'installer/**', 'tests/data/**', '.github/workflows/rust-prototype.yml']
   workflow_dispatch:
 
 permissions:
   contents: read
 jobs:
-  prototype:
+  preview:
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-latest
-            bundles: nsis
           - os: macos-latest
             bundles: app,dmg
           - os: ubuntu-24.04
@@ -25,6 +24,7 @@ jobs:
     env:
       CARGO_INCREMENTAL: '0'
       APPIMAGE_EXTRACT_AND_RUN: '1'
+      INNO_VERSION: '6.7.3'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -40,37 +40,51 @@ jobs:
       - if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libfuse2t64 tesseract-ocr tesseract-ocr-chi-sim xvfb dbus-x11 xdotool python3-gi gir1.2-gtk-3.0
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev patchelf libfuse2t64 tesseract-ocr tesseract-ocr-chi-sim xvfb dbus-x11 xdotool python3-gi gir1.2-gtk-3.0
           dpkg-query -W -f='${Package} ${Installed-Size} KiB\n' tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng libwebkit2gtk-4.1-0 libayatana-appindicator3-1
       - run: npm ci
       - run: npm run check
+      - name: Frontend unit tests (calendar keyboard, field filters)
+        run: npm test
       - run: npm run build
       - run: cargo fmt --all --check
       - run: cargo clippy --release --workspace --all-targets --locked -- -D warnings
-      - run: cargo test --release --workspace --locked
-      - run: npm run tauri build -- --bundles ${{ matrix.bundles }}
+      - name: Rust core (old CTest fixtures, migration) and shell tests
+        run: cargo test --release --workspace --locked
+      - if: runner.os != 'Windows'
+        run: npm run tauri build -- --bundles ${{ matrix.bundles }}
+      - if: runner.os == 'Windows'
+        run: npm run tauri build -- --no-bundle
+      - if: runner.os == 'Windows'
+        name: Build the Inno installer around the Rust EXE (same AppId)
+        shell: pwsh
+        run: |
+          $iscc = @("$env:ProgramFiles\Inno Setup 6\ISCC.exe", "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) {
+            choco install innosetup --version=$env:INNO_VERSION -y --no-progress
+            $iscc = @("$env:ProgramFiles\Inno Setup 6\ISCC.exe", "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+          }
+          $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $numeric = ($version -split '-')[0]
+          $exe = (Resolve-Path target/release/offwork.exe).Path
+          $out = Join-Path (Get-Location) target/installer
+          & $iscc "/DAppVersion=$version" "/DNumericVersion=$numeric" "/DSourceExe=$exe" "/DOutputPath=$out" ..\installer\offwork.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with $LASTEXITCODE" }
       - if: runner.os == 'Linux'
+        name: Real GTK drag-and-drop into the release widget under Xvfb
         run: dbus-run-session -- xvfb-run -a /usr/bin/python3 scripts/x11_drop.py
       - run: python scripts/package_report.py
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - if: runner.os == 'Windows'
+        name: Install 0.4.5, upgrade to the Rust build, migrate, reinstall, uninstall
+        run: python scripts/windows_smoke.py artifacts/OffWork-Setup.exe
       - run: python -m pip install psutil==7.2.2
       - if: runner.os == 'Linux'
         run: dbus-run-session -- xvfb-run -a python scripts/measure.py target/release/offwork artifacts/runtime.json --seconds 30
       - if: runner.os == 'Windows'
         run: python scripts/measure.py target/release/offwork.exe artifacts/runtime.json --seconds 30
-      - if: runner.os == 'Windows'
-        name: Compare the existing native widget on the same runner
-        run: |
-          cmake -S .. -B target/legacy -A x64
-          cmake --build target/legacy --config Release --target OffWork --parallel
-          python scripts/measure.py target/legacy/Release/OffWork.exe artifacts/legacy-runtime.json --legacy-windows --seconds 30
-          $runtime = Get-ChildItem "${env:ProgramFiles(x86)}/Microsoft/EdgeWebView/Application" -Directory | Where-Object Name -Match '^\d' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          if ($runtime) {
-            $bytes = (Get-ChildItem $runtime.FullName -Recurse -File | Measure-Object Length -Sum).Sum
-            "WebView2 $($runtime.Name) $bytes bytes" | Tee-Object artifacts/host-runtime.txt
-          }
       - if: runner.os == 'macOS'
         run: |
           test "$(uname -m)" = arm64
@@ -78,5 +92,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: OffWork-prototype-${{ runner.os }}-${{ runner.arch }}
+          name: OffWork-preview-${{ runner.os }}-${{ runner.arch }}
           path: rust/artifacts

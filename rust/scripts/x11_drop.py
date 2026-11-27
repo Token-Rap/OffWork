@@ -37,16 +37,16 @@ with tempfile.TemporaryDirectory() as config:
                 if app.poll() is not None or time.monotonic()>deadline: raise RuntimeError("Widget did not render")
                 time.sleep(.05)
             xdotool("mousemove","100","150","mousedown","1")
-            window=xdotool("search","--onlyvisible","--name","^下班手账$").splitlines()[-1]
+            window=xdotool("search","--onlyvisible","--name","^OffWork$").splitlines()[-1]
             geometry=dict(row.split("=",1) for row in xdotool("getwindowgeometry","--shell",window).splitlines())
             end_x,end_y=int(geometry["X"])+80,int(geometry["Y"])+80
             for step in range(1,21):
                 xdotool("mousemove",int(100+(end_x-100)*step/20),int(150+(end_y-150)*step/20))
                 time.sleep(.04)
             xdotool("mouseup","1")
-            settings=folder/"io.github.token-rap.offwork.prototype/settings.json"
+            settings=folder/"offwork/settings.json"
             for _ in range(200):
-                if settings.exists() and json.loads(settings.read_text())["start"]==535: break
+                if settings.exists() and json.loads(settings.read_text())["work"]["startMinutes"]==535: break
                 time.sleep(.1)
             else: raise RuntimeError("Native file drop did not persist 08:55")
             print("GTK file drag -> release widget -> Tesseract -> persisted 08:55")
