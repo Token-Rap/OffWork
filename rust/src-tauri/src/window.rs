@@ -104,6 +104,17 @@ pub fn zoom(w: &WebviewWindow, scale: i32) {
     let _ = w.set_zoom(f64::from(scale.clamp(75, 150)) / 100.0);
 }
 
+/// GTK will not shrink a non-resizable window below the size it was created
+/// with (360 px wide), so 75 % stayed 360 px wide and spilled past the work
+/// area (found by scripts/layout_smoke.py). Allow resizing for the call.
+fn resize(w: &WebviewWindow, lw: f64, lh: f64) {
+    #[cfg(target_os = "linux")]
+    let _ = w.set_resizable(true);
+    let _ = w.set_size(LogicalSize::new(lw, lh));
+    #[cfg(target_os = "linux")]
+    let _ = w.set_resizable(false);
+}
+
 /// Logical size for `scale` that fits the current work area.
 fn fitted(w: &WebviewWindow, scale: i32, expanded: bool) -> (f64, f64) {
     match (work_area(w), w.scale_factor()) {
@@ -122,7 +133,7 @@ fn fitted(w: &WebviewWindow, scale: i32, expanded: bool) -> (f64, f64) {
 pub fn fit(w: &WebviewWindow, scale: i32, expanded: bool) {
     zoom(w, scale);
     let (lw, lh) = fitted(w, scale, expanded);
-    let _ = w.set_size(LogicalSize::new(lw, lh));
+    resize(w, lw, lh);
     let (Ok(pos), Ok(factor), Some(work)) = (w.outer_position(), w.scale_factor(), work_area(w))
     else {
         return;
@@ -138,7 +149,7 @@ pub fn fit(w: &WebviewWindow, scale: i32, expanded: bool) {
 pub fn place_initially(w: &WebviewWindow, scale: i32) {
     zoom(w, scale);
     let (lw, lh) = fitted(w, scale, false);
-    let _ = w.set_size(LogicalSize::new(lw, lh));
+    resize(w, lw, lh);
     let (Ok(factor), Some(work)) = (w.scale_factor(), work_area(w)) else {
         return;
     };

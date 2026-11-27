@@ -27,10 +27,11 @@
   let resizing: { x: number; scale: number } | null = null;
   let mainEl = $state<HTMLElement>();
   let panelEl = $state<HTMLElement>();
+  let bodyEl = $state<HTMLElement>();
 
   /** Scrolls to the end and checks the last control is inside the window. */
   function layoutReport() {
-    for (const el of [panelEl, mainEl]) if (el) el.scrollTop = el.scrollHeight;
+    for (const el of [panelEl, bodyEl]) if (el) el.scrollTop = el.scrollHeight;
     const rect = (el: Element | null | undefined) => {
       const r = el?.getBoundingClientRect();
       return r ? { top: r.top, bottom: r.bottom, left: r.left, right: r.right } : null;
@@ -331,6 +332,7 @@
       </button>
       <button aria-label={view?.tray ? "隐藏到托盘" : "退出"} onclick={() => win.close()}>×</button>
     </header>
+    <div class="body" bind:this={bodyEl}>
 
     {#if t && s}
       <section class="summary" aria-label="今日概览">
@@ -437,6 +439,7 @@
         </p>
       </form>
     {/if}
+    </div>
     {#if !expanded && error}<p class="toast" role="alert">{error}</p>{/if}
     <div class="grip" aria-hidden="true" onpointerdown={grip} onpointermove={grip} onpointerup={grip} onpointercancel={grip}></div>
   </main>
@@ -472,11 +475,21 @@
     background: #fffbee;
     overflow: hidden;
   }
-  main > :global(*) {
+  /* The header (title, drag area, ×) never scrolls away. Below it the
+     summary and settings share the rest; the panel scrolls on its own, and
+     only when even the summary does not fit does the whole body scroll. */
+  header {
     flex-shrink: 0;
   }
-  main.expanded {
+  .body {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
     overflow-y: auto;
+  }
+  .body > :global(*) {
+    flex-shrink: 0;
   }
   main.drag {
     outline: 4px dashed #48705a;
@@ -608,7 +621,7 @@
   .version {
     color: #6f7a6c;
   }
-  main > .panel {
+  .body > .panel {
     margin-top: 0;
     flex: 1 1 auto;
     min-height: 160px;
