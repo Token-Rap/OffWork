@@ -17,7 +17,8 @@ pub trait Profile {
 
 /// In-memory INI with Win32 profile semantics: case-insensitive section and
 /// key names, first match wins, whitespace trimmed, one pair of matching
-/// quotes stripped, `;` comment lines, UTF-16/UTF-8 BOMs honoured.
+/// quotes stripped, `;` comment lines, UTF-16 BOMs honoured (UTF-8 BOMs are
+/// not, exactly like Windows).
 #[derive(Clone, Debug, Default)]
 pub struct IniText {
     sections: Vec<(String, Vec<(String, String)>)>,
@@ -40,8 +41,9 @@ fn decode(bytes: &[u8]) -> String {
     match bytes {
         [0xff, 0xfe, ..] => utf16(false),
         [0xfe, 0xff, ..] => utf16(true),
-        [0xef, 0xbb, 0xbf, rest @ ..] => String::from_utf8_lossy(rest).into_owned(),
-        // ANSI code page; every value OffWork wrote is ASCII.
+        // ANSI code page; every value OffWork wrote is ASCII. A UTF-8 BOM is
+        // NOT honoured by the profile API (verified against Windows in CI):
+        // it stays glued to the first line, so a leading section is unseen.
         _ => String::from_utf8_lossy(bytes).into_owned(),
     }
 }

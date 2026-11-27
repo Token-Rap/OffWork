@@ -255,7 +255,9 @@ fn profile_api_edge_cases() {
         ),
         (600, "2027-01-04", true)
     );
-    // UTF-8 BOM.
-    let s = common::load_bytes(b"\xef\xbb\xbf[work]\nendMinutes=1110\n");
-    assert_eq!(s.end_minutes, 1110);
+    // The profile API does not honour a UTF-8 BOM: the first section is lost,
+    // so 0.4.5 itself saw defaults here and the import must agree.
+    let s =
+        common::load_bytes(b"\xef\xbb\xbf[work]\nendMinutes=1110\n[window]\nscalePercent=120\n");
+    assert_eq!((s.end_minutes, s.scale_percent), (1080, 120));
 }
