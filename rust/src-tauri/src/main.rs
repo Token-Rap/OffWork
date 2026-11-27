@@ -17,7 +17,7 @@ use offwork_core::store::{self, Legacy, LegacyIni};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
-use tauri::{AppHandle, DragDropEvent, Emitter, Manager, RunEvent, WindowEvent};
+use tauri::{AppHandle, DragDropEvent, Emitter, Manager, WindowEvent};
 
 /// Hidden windows keep counting: one observation per wall-clock second,
 /// recomputed from the local clock after every sleep or wake.
@@ -232,7 +232,7 @@ fn main() {
         .expect("Unable to start OffWork");
     app.run(|app, event| {
         #[cfg(target_os = "macos")]
-        if let RunEvent::Reopen { .. } = event {
+        if let tauri::RunEvent::Reopen { .. } = event {
             window::show(app);
         }
         #[cfg(not(target_os = "macos"))]
